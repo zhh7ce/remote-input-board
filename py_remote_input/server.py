@@ -6,19 +6,18 @@ import json
 import os
 from pathlib import Path
 import socket
+import ssl
 from urllib.parse import urlparse
 
 from py_remote_input.logger import Logger
-from py_remote_input.settings_store import SettingsStore
-from py_remote_input.snippets_store import SnippetsStore
 from py_remote_input.stats import TextStatsStore, count_text_history_chars
-from py_remote_input.typer import click_mouse, mouse_button, move_mouse, paste_text, press_key, scroll_mouse, type_text
+from py_remote_input.typer import type_text
 from py_remote_input.web import handle_realtime_message, handle_request
 from py_remote_input.websocket import build_websocket_accept, encode_websocket_frame, read_websocket_frame
 
 
-def get_local_urls(port: int) -> list[str]:
-    urls: list[str] = []
+def get_local_addresses(port: int) -> list[str]:
+    addresses: list[str] = []
     seen: set[str] = set()
     try:
         hostname = socket.gethostname()
@@ -29,10 +28,10 @@ def get_local_urls(port: int) -> list[str]:
             if address.startswith("127.") or address in seen:
                 continue
             seen.add(address)
-            urls.append(f"http://{address}:{port}")
+            addresses.append(f"{address}:{port}")
     except OSError:
         pass
-    return urls
+    return addresses
 
 
 def build_history_recorder(log_dir: Path, stats_file_path: Path | None = None):
@@ -63,22 +62,7 @@ def _write_websocket_frame(writer, opcode: int, payload: bytes = b"") -> None:
         writer.flush()
 
 
-def serve_websocket_messages(
-    reader,
-    writer,
-    logger: Logger,
-    press_key=None,
-    move_mouse=None,
-    scroll_mouse=None,
-    click_mouse=None,
-    mouse_button=None,
-    type_text=None,
-    paste_text=None,
-    record_history=None,
-    text_stats=None,
-    settings_store=None,
-    snippets_store=None,
-) -> None:
+def serve_websocket_messages(reader, writer, logger: Logger, *, type_text, record_history=None, text_stats=None) -> None:
     while True:
         try:
             frame = read_websocket_frame(reader)
@@ -106,30 +90,26 @@ def serve_websocket_messages(
             result = handle_realtime_message(
                 payload,
                 logger,
-                press_key=press_key,
-                move_mouse=move_mouse,
-                scroll_mouse=scroll_mouse,
-                click_mouse=click_mouse,
-                mouse_button=mouse_button,
                 type_text=type_text,
-                paste_text=paste_text,
                 record_history=record_history,
                 text_stats=text_stats,
-                settings_store=settings_store,
-                snippets_store=snippets_store,
             )
             request_id = payload.get("id")
             if isinstance(request_id, (str, int)):
                 result["id"] = request_id
-            if not result.get("ok") or result.get("type") in {"pong", "settings", "type", "paste", "stats", "snippets"}:
+            if not result.get("ok") or result.get("type") in {"pong", "stats", "type"}:
                 _write_websocket_frame(writer, 0x1, json.dumps(result, ensure_ascii=False).encode("utf-8"))
         except OSError as exc:
             logger.warn("WebSocket connection closed.", {"error": str(exc)})
             return
 
 
-def build_handler(logger: Logger, record_history, text_stats, snippets_store=None, settings_store=None):
+def build_handler(logger: Logger, record_history, text_stats, type_text):
     class RequestHandler(BaseHTTPRequestHandler):
+        # HTTP/1.1 is required: browsers reject a WebSocket upgrade response
+        # that is not "HTTP/1.1 101 Switching Protocols".
+        protocol_version = "HTTP/1.1"
+
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             if parsed.path == "/ws" and self.headers.get("Upgrade", "").lower() == "websocket":
@@ -170,17 +150,9 @@ def build_handler(logger: Logger, record_history, text_stats, snippets_store=Non
                 self.rfile,
                 self.wfile,
                 logger,
-                press_key=press_key,
-                move_mouse=move_mouse,
-                scroll_mouse=scroll_mouse,
-                click_mouse=click_mouse,
-                mouse_button=mouse_button,
                 type_text=type_text,
-                paste_text=paste_text,
                 record_history=record_history,
                 text_stats=text_stats,
-                settings_store=settings_store,
-                snippets_store=snippets_store,
             )
             logger.info("WebSocket disconnected.")
 
@@ -192,16 +164,10 @@ def build_handler(logger: Logger, record_history, text_stats, snippets_store=Non
                 self.command,
                 parsed.path,
                 body,
-                type_text=type_text,
-                logger=logger,
-                press_key=press_key,
+                type_text,
+                logger,
                 record_history=record_history,
                 text_stats=text_stats,
-                snippets_store=snippets_store,
-                move_mouse=move_mouse,
-                scroll_mouse=scroll_mouse,
-                click_mouse=click_mouse,
-                mouse_button=mouse_button,
             )
             self.send_response(response.status_code)
             self.send_header("Content-Type", response.content_type)
@@ -213,23 +179,35 @@ def build_handler(logger: Logger, record_history, text_stats, snippets_store=Non
     return RequestHandler
 
 
+def maybe_wrap_tls(server: ThreadingHTTPServer, logger: Logger) -> bool:
+    """Enable HTTPS when SSL_CERT_FILE and SSL_KEY_FILE are both provided."""
+    cert_file = os.environ.get("SSL_CERT_FILE")
+    key_file = os.environ.get("SSL_KEY_FILE")
+    if not cert_file and not key_file:
+        return False
+    if not cert_file or not key_file:
+        raise RuntimeError("Set both SSL_CERT_FILE and SSL_KEY_FILE to enable HTTPS (or neither for HTTP).")
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(cert_file, key_file)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    logger.info(f"TLS enabled with certificate {cert_file}.")
+    return True
+
+
 def serve() -> None:
     port = int(os.environ.get("PORT", "3210"))
     log_dir = Path.cwd() / "logs"
     logger = Logger(log_dir / "server.log")
     record_history, text_stats = build_history_recorder(log_dir, log_dir / "stats.json")
-    snippets_store = SnippetsStore(log_dir / "snippets.json")
-    settings_store = SettingsStore(log_dir / "settings.json")
-    server = ThreadingHTTPServer(
-        ("0.0.0.0", port), build_handler(logger, record_history, text_stats, snippets_store, settings_store)
-    )
+    server = ThreadingHTTPServer(("0.0.0.0", port), build_handler(logger, record_history, text_stats, type_text))
+    use_tls = maybe_wrap_tls(server, logger)
+    scheme = "https" if use_tls else "http"
 
-    logger.info(f"Remote input server is running on port {port}.")
+    logger.info(f"Remote input server is running on port {port} ({scheme}).")
     logger.info("Open one of these addresses on your phone:")
-    for url in get_local_urls(port):
-        logger.info(url)
+    for address in get_local_addresses(port):
+        logger.info(f"{scheme}://{address}")
     logger.info("Keep the target desktop app focused before sending text from your phone.")
-    logger.info(f"Input history is written to {log_dir / 'input-history.log'}.")
 
     try:
         server.serve_forever()

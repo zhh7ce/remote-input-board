@@ -14,13 +14,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--history",
         type=Path,
-        default=Path("dist") / "logs" / "input-history.log",
-        help="Input history JSONL file.",
+        default=Path("logs") / "history",
+        help="Directory containing history JSONL files.",
     )
     parser.add_argument(
         "--stats",
         type=Path,
-        default=Path("dist") / "logs" / "stats.json",
+        default=Path("logs") / "stats.json",
         help="Stats JSON file to write.",
     )
     return parser.parse_args()

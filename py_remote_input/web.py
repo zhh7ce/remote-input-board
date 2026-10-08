@@ -41,11 +41,11 @@ def _is_finite_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
-def _finish_text_message(message_type: str, text: str, result: dict, record_history, text_stats) -> dict:
+def _finish_text_message(text: str, result: dict, record_history, text_stats) -> dict:
     if record_history is not None:
         record_history({"kind": "text", "text": text})
     total_chars = text_stats.get_total_chars() if text_stats is not None else None
-    response = {"ok": True, "type": message_type, "sentChars": len(text), **result}
+    response = {"ok": True, "type": "type", "sentChars": len(text), **result}
     if total_chars is not None:
         response["totalChars"] = total_chars
     return response
@@ -54,17 +54,10 @@ def _finish_text_message(message_type: str, text: str, result: dict, record_hist
 def handle_realtime_message(
     payload: dict,
     logger,
-    press_key=None,
-    move_mouse=None,
-    scroll_mouse=None,
-    click_mouse=None,
-    mouse_button=None,
+    *,
     type_text=None,
-    paste_text=None,
     record_history=None,
     text_stats=None,
-    settings_store=None,
-    snippets_store=None,
 ) -> dict:
     if not isinstance(payload, dict):
         return {"ok": False, "error": "Realtime message must be a JSON object."}
@@ -85,104 +78,13 @@ def handle_realtime_message(
             saved = text_stats.save_total_chars(int(round(total)))
             return {"ok": True, "type": "stats", "totalChars": saved}
 
-        if message_type == "getSnippets":
-            if snippets_store is None:
-                return {"ok": False, "error": "Snippets store is not configured."}
-            return {"ok": True, "type": "snippets", "snippets": snippets_store.get_all()}
-
-        if message_type == "setSnippets":
-            if snippets_store is None:
-                return {"ok": False, "error": "Snippets store is not configured."}
-            incoming = payload.get("snippets")
-            if not isinstance(incoming, list):
-                return {"ok": False, "error": "Expected a snippets array."}
-            return {"ok": True, "type": "snippets", "snippets": snippets_store.save_all(incoming)}
-
-        if message_type == "getSettings":
-            if settings_store is None:
-                return {"ok": False, "error": "Settings store is not configured."}
-            return {"ok": True, "type": "settings", "settings": settings_store.get_all()}
-
-        if message_type == "setSettings":
-            if settings_store is None:
-                return {"ok": False, "error": "Settings store is not configured."}
-            incoming = payload.get("settings")
-            if not isinstance(incoming, dict):
-                return {"ok": False, "error": "Expected a settings object."}
-            if "inputMethod" in incoming and incoming["inputMethod"] not in {"type", "paste"}:
-                return {"ok": False, "error": "Invalid inputMethod value."}
-            return {"ok": True, "type": "settings", "settings": settings_store.save_all(incoming)}
-
         if message_type == "type":
             text = payload.get("text", "")
             if not isinstance(text, str) or not text.strip():
                 return {"ok": False, "error": "Text is required."}
             if type_text is None:
                 return {"ok": False, "error": "Text input is not configured."}
-            return _finish_text_message("type", text, type_text(text), record_history, text_stats)
-
-        if message_type == "paste":
-            text = payload.get("text", "")
-            if not isinstance(text, str) or not text.strip():
-                return {"ok": False, "error": "Text is required."}
-            if paste_text is None:
-                return {"ok": False, "error": "Paste input is not configured."}
-            return _finish_text_message("paste", text, paste_text(text), record_history, text_stats)
-
-        if message_type == "key":
-            key = payload.get("key", "")
-            if key not in {"backspace", "delete", "down", "enter", "escape", "up"}:
-                return {"ok": False, "error": f"Unsupported key: {key}"}
-            if press_key is None:
-                return {"ok": False, "error": "Key input is not configured."}
-            return {"ok": True, **(press_key(key) or {})}
-
-        if message_type == "mouseMove":
-            dx = payload.get("dx")
-            dy = payload.get("dy")
-            if not _is_finite_number(dx) or not _is_finite_number(dy):
-                return {"ok": False, "error": "Mouse movement dx and dy are required."}
-            if move_mouse is None:
-                return {"ok": False, "error": "Mouse input is not configured."}
-
-            rounded_dx = int(round(dx))
-            rounded_dy = int(round(dy))
-            if rounded_dx == 0 and rounded_dy == 0:
-                return {"ok": True, "method": "sendinput-mouse-move", "dx": 0, "dy": 0}
-            return {"ok": True, **(move_mouse(rounded_dx, rounded_dy) or {})}
-
-        if message_type == "mouseScroll":
-            dx = payload.get("dx")
-            dy = payload.get("dy")
-            if not _is_finite_number(dx) or not _is_finite_number(dy):
-                return {"ok": False, "error": "Mouse scroll dx and dy are required."}
-            if scroll_mouse is None:
-                return {"ok": False, "error": "Mouse scroll input is not configured."}
-
-            rounded_dx = int(round(dx))
-            rounded_dy = int(round(dy))
-            if rounded_dx == 0 and rounded_dy == 0:
-                return {"ok": True, "method": "sendinput-mouse-scroll", "dx": 0, "dy": 0}
-            return {"ok": True, **(scroll_mouse(rounded_dx, rounded_dy) or {})}
-
-        if message_type == "mouseClick":
-            button = payload.get("button", "")
-            if button not in {"left", "right"}:
-                return {"ok": False, "error": f"Unsupported mouse button: {button}"}
-            if click_mouse is None:
-                return {"ok": False, "error": "Mouse input is not configured."}
-            return {"ok": True, **(click_mouse(button) or {})}
-
-        if message_type == "mouseButton":
-            button = payload.get("button", "")
-            action = payload.get("action", "")
-            if button not in {"left", "right"}:
-                return {"ok": False, "error": f"Unsupported mouse button: {button}"}
-            if action not in {"down", "up"}:
-                return {"ok": False, "error": f"Unsupported mouse button action: {action}"}
-            if mouse_button is None:
-                return {"ok": False, "error": "Mouse input is not configured."}
-            return {"ok": True, **(mouse_button(button, action) or {})}
+            return _finish_text_message(text, type_text(text), record_history, text_stats)
 
         if message_type == "ping":
             return {"ok": True, "type": "pong"}
@@ -193,38 +95,15 @@ def handle_realtime_message(
         return {"ok": False, "error": str(exc)}
 
 
-def _respond_text_submission(text, perform, action_label, logger, record_history, text_stats) -> Response:
-    logger.info(f"Received {action_label} request.", {"textLength": len(text)})
-    try:
-        result = perform(text)
-        if record_history is not None:
-            record_history({"kind": "text", "text": text})
-        total_chars = text_stats.get_total_chars() if text_stats is not None else None
-        logger.info(f"{action_label} request completed.", result)
-        payload = {"ok": True, "sentChars": len(text), **result}
-        if total_chars is not None:
-            payload["totalChars"] = total_chars
-        return json_response(200, payload)
-    except Exception as exc:  # noqa: BLE001
-        logger.error(f"{action_label} request failed.", {"error": str(exc)})
-        return json_response(500, {"error": str(exc)})
-
-
 def handle_request(
     method: str,
     path: str,
     body: bytes,
     type_text,
     logger,
-    press_key=None,
+    *,
     record_history=None,
     text_stats=None,
-    snippets_store=None,
-    move_mouse=None,
-    scroll_mouse=None,
-    click_mouse=None,
-    mouse_button=None,
-    paste_text=None,
 ) -> Response:
     if method == "GET" and path == "/":
         logger.info("Served mobile page.")
@@ -244,161 +123,19 @@ def handle_request(
             logger.warn("Rejected empty text submission.")
             return json_response(400, {"error": "Text is required."})
 
-        return _respond_text_submission(text, type_text, "typing", logger, record_history, text_stats)
-
-    if method == "POST" and path == "/api/paste":
-        payload = _read_json_body(body, logger)
-        if payload is None:
-            return json_response(400, {"error": "Invalid JSON body."})
-
-        text = payload.get("text", "")
-        if not isinstance(text, str) or not text.strip():
-            logger.warn("Rejected empty text submission.")
-            return json_response(400, {"error": "Text is required."})
-        if paste_text is None:
-            return json_response(500, {"error": "Paste input is not configured."})
-
-        return _respond_text_submission(text, paste_text, "paste", logger, record_history, text_stats)
-
-    if method == "POST" and path == "/api/key":
-        payload = _read_json_body(body, logger)
-        if payload is None:
-            return json_response(400, {"error": "Invalid JSON body."})
-
-        key = payload.get("key", "")
-        if key not in {"backspace", "delete", "down", "enter", "escape", "up"}:
-            return json_response(400, {"error": f"Unsupported key: {key}"})
-        if press_key is None:
-            return json_response(500, {"error": "Key input is not configured."})
-
-        logger.info("Received key request.", {"key": key})
+        logger.info("Received typing request.", {"textLength": len(text)})
         try:
-            result = press_key(key)
-            logger.info("Key request completed.", result)
-            return json_response(200, {"ok": True, **result})
+            result = type_text(text)
+            if record_history is not None:
+                record_history({"kind": "text", "text": text})
+            total_chars = text_stats.get_total_chars() if text_stats is not None else None
+            logger.info("Typing request completed.", result)
+            response_payload = {"ok": True, "sentChars": len(text), **result}
+            if total_chars is not None:
+                response_payload["totalChars"] = total_chars
+            return json_response(200, response_payload)
         except Exception as exc:  # noqa: BLE001
-            logger.error("Key request failed.", {"key": key, "error": str(exc)})
+            logger.error("Typing request failed.", {"error": str(exc)})
             return json_response(500, {"error": str(exc)})
-
-    if method == "POST" and path == "/api/mouse/move":
-        payload = _read_json_body(body, logger)
-        if payload is None:
-            return json_response(400, {"error": "Invalid JSON body."})
-
-        dx = payload.get("dx")
-        dy = payload.get("dy")
-        if not _is_finite_number(dx) or not _is_finite_number(dy):
-            return json_response(400, {"error": "Mouse movement dx and dy are required."})
-        if move_mouse is None:
-            return json_response(500, {"error": "Mouse input is not configured."})
-
-        rounded_dx = int(round(dx))
-        rounded_dy = int(round(dy))
-        if rounded_dx == 0 and rounded_dy == 0:
-            return json_response(200, {"ok": True, "method": "sendinput-mouse-move", "dx": 0, "dy": 0})
-
-        logger.info("Received mouse move request.", {"dx": rounded_dx, "dy": rounded_dy})
-        try:
-            result = move_mouse(rounded_dx, rounded_dy)
-            logger.info("Mouse move request completed.", result)
-            return json_response(200, {"ok": True, **result})
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Mouse move request failed.", {"dx": rounded_dx, "dy": rounded_dy, "error": str(exc)})
-            return json_response(500, {"error": str(exc)})
-
-    if method == "POST" and path == "/api/mouse/scroll":
-        payload = _read_json_body(body, logger)
-        if payload is None:
-            return json_response(400, {"error": "Invalid JSON body."})
-
-        dx = payload.get("dx")
-        dy = payload.get("dy")
-        if not _is_finite_number(dx) or not _is_finite_number(dy):
-            return json_response(400, {"error": "Mouse scroll dx and dy are required."})
-        if scroll_mouse is None:
-            return json_response(500, {"error": "Mouse scroll input is not configured."})
-
-        rounded_dx = int(round(dx))
-        rounded_dy = int(round(dy))
-        if rounded_dx == 0 and rounded_dy == 0:
-            return json_response(200, {"ok": True, "method": "sendinput-mouse-scroll", "dx": 0, "dy": 0})
-
-        logger.info("Received mouse scroll request.", {"dx": rounded_dx, "dy": rounded_dy})
-        try:
-            result = scroll_mouse(rounded_dx, rounded_dy)
-            logger.info("Mouse scroll request completed.", result)
-            return json_response(200, {"ok": True, **result})
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Mouse scroll request failed.", {"dx": rounded_dx, "dy": rounded_dy, "error": str(exc)})
-            return json_response(500, {"error": str(exc)})
-
-    if method == "POST" and path == "/api/mouse/click":
-        payload = _read_json_body(body, logger)
-        if payload is None:
-            return json_response(400, {"error": "Invalid JSON body."})
-
-        button = payload.get("button", "")
-        if button not in {"left", "right"}:
-            return json_response(400, {"error": f"Unsupported mouse button: {button}"})
-        if click_mouse is None:
-            return json_response(500, {"error": "Mouse input is not configured."})
-
-        logger.info("Received mouse click request.", {"button": button})
-        try:
-            result = click_mouse(button)
-            logger.info("Mouse click request completed.", result)
-            return json_response(200, {"ok": True, **result})
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Mouse click request failed.", {"button": button, "error": str(exc)})
-            return json_response(500, {"error": str(exc)})
-
-    if method == "POST" and path == "/api/mouse/button":
-        payload = _read_json_body(body, logger)
-        if payload is None:
-            return json_response(400, {"error": "Invalid JSON body."})
-
-        button = payload.get("button", "")
-        action = payload.get("action", "")
-        if button not in {"left", "right"}:
-            return json_response(400, {"error": f"Unsupported mouse button: {button}"})
-        if action not in {"down", "up"}:
-            return json_response(400, {"error": f"Unsupported mouse button action: {action}"})
-        if mouse_button is None:
-            return json_response(500, {"error": "Mouse input is not configured."})
-
-        logger.info("Received mouse button request.", {"button": button, "action": action})
-        try:
-            result = mouse_button(button, action)
-            logger.info("Mouse button request completed.", result)
-            return json_response(200, {"ok": True, **result})
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Mouse button request failed.", {"button": button, "action": action, "error": str(exc)})
-            return json_response(500, {"error": str(exc)})
-
-    if method == "GET" and path == "/api/snippets":
-        snippets = snippets_store.get_all() if snippets_store is not None else []
-        return json_response(200, {"ok": True, "snippets": snippets})
-
-    if method == "POST" and path == "/api/snippets":
-        payload = _read_json_body(body, logger)
-        if payload is None:
-            return json_response(400, {"error": "Invalid JSON body."})
-        incoming = payload.get("snippets")
-        if not isinstance(incoming, list):
-            return json_response(400, {"error": "Expected a snippets array."})
-        if snippets_store is None:
-            return json_response(500, {"error": "Snippets store is not configured."})
-        snippets = snippets_store.save_all(incoming)
-        return json_response(200, {"ok": True, "snippets": snippets})
 
     return json_response(404, {"error": "Not found."})
-
-
-
-
-
-
-
-
-
-

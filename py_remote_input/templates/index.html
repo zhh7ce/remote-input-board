@@ -2,8 +2,8 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>远程输入粘贴板</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>远程输入板</title>
   <style>
     :root {
       --bg: #eef3f0;
@@ -11,7 +11,6 @@
       --muted: #65716d;
       --line: #d9e2de;
       --accent: #0f7b5f;
-      --accent-2: #1d4f91;
       --danger: #b73535;
       --shadow: 0 18px 42px rgba(20, 38, 31, 0.14);
     }
@@ -20,1544 +19,366 @@
       margin: 0;
       min-height: 100vh;
       color: var(--ink);
-      font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+      font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
       background:
         linear-gradient(135deg, rgba(15, 123, 95, 0.18), transparent 34%),
-        linear-gradient(315deg, rgba(29, 79, 145, 0.16), transparent 32%),
         var(--bg);
       padding: 16px;
     }
-    .shell {
-      width: min(100%, 720px);
-      margin: 0 auto;
-      display: grid;
-      grid-template-rows: auto auto auto;
-      gap: 14px;
-    }
-    .composer, .statusbar {
+    .shell { width: min(100%, 720px); margin: 0 auto; display: grid; gap: 14px; }
+    .card {
       background: rgba(255, 255, 255, 0.92);
       border: 1px solid var(--line);
       border-radius: 18px;
       box-shadow: var(--shadow);
-      backdrop-filter: blur(12px);
+      padding: 14px;
     }
-    .composer { padding: 14px; display: grid; align-content: start; gap: 8px; }
     .composerHeader {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
+      margin-bottom: 8px;
     }
-    .headerTools {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    label { font-size: 14px; font-weight: 700; }
-    .totalChars {
-      color: var(--muted);
-      font-size: 13px;
-      font-weight: 700;
-      white-space: nowrap;
-    }
+    h1 { font-size: 17px; margin: 0; }
+    .totalChars { color: var(--muted); font-size: 13px; font-weight: 700; white-space: nowrap; }
     .totalChars strong { color: var(--accent); font-size: 16px; }
-    .textSurface { min-height: 220px; display: grid; grid-template-rows: minmax(0, 1fr) auto auto; gap: 8px; }
     textarea {
       width: 100%;
-      height: 100%;
-      min-height: 0;
-      max-height: none;
+      min-height: 220px;
       border: 1px solid var(--accent);
       border-radius: 14px;
-      padding: 16px 16px 12px 16px;
+      padding: 16px;
       color: var(--ink);
       background: #fbfdfc;
       font: inherit;
       font-size: 19px;
       line-height: 1.65;
-      resize: none;
+      resize: vertical;
       outline: none;
-      overflow-x: hidden;
       overflow-wrap: break-word;
       box-shadow: 0 0 0 4px rgba(15, 123, 95, 0.12);
     }
-    /* 自动发送区域已隐藏，保留代码备用 */
-    .autoSendSentence {
-      display: none;
-    }
-    .autoSendSentence input[type="checkbox"] {
-      width: 22px;
-      height: 22px;
-      margin: 0 4px 0 0;
-      accent-color: var(--accent);
-      flex: 0 0 auto;
-    }
-    .autoSendSentence input[type="number"] {
-      width: 72px;
-      height: 40px;
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 0 10px;
-      color: var(--ink);
-      background: #fbfdfc;
-      font: inherit;
-      font-weight: 700;
-      outline: none;
-    }
-    .autoSendSentence input[type="number"]:focus {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 4px rgba(15, 123, 95, 0.12);
-    }
-    /* 回车行为切换 */
-    .enterBehaviorToggle {
-      min-height: 40px;
+    .options {
       display: flex;
       align-items: center;
       gap: 6px;
+      margin-top: 8px;
       color: var(--muted);
       font-size: 15px;
       font-weight: 700;
-      white-space: nowrap;
       cursor: pointer;
       user-select: none;
     }
-    .enterBehaviorToggle .toggleLabel {
-      color: var(--accent);
-      font-weight: 800;
-    }
-    .enterBehaviorToggle.newlineMode .toggleLabel {
-      color: var(--accent-2);
-    }
-    .autoSendSentence input[type="number"]:focus {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 4px rgba(15, 123, 95, 0.12);
-    }
-    .actions { display: flex; gap: 10px; }
-    .textActions {
-      display: grid;
-      grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
-      grid-template-areas: "escape send" "snippets send";
-      gap: 10px;
-    }
-    .keyActions {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-    }
-    .modePanel { display: grid; gap: 0; }
-    .modePanel[hidden] { display: none; }
-    .modeToggle {
-      min-height: 36px;
-      border-radius: 999px;
-      padding: 0 12px;
-      color: var(--accent-2);
-      background: rgba(29, 79, 145, 0.1);
-      font-size: 13px;
-    }
-    .touchpadPanel {
-      display: grid;
-      gap: 10px;
-    }
-    .trackpad { aspect-ratio: 1;
-      border: 1px solid rgba(15, 123, 95, 0.18);
-      border-radius: 18px;
-      background:
-        linear-gradient(145deg, rgba(255, 255, 255, 0.88), rgba(218, 231, 226, 0.86)),
-        radial-gradient(circle at 30% 20%, rgba(15, 123, 95, 0.13), transparent 34%);
-      box-shadow:
-        inset 0 2px 8px rgba(255, 255, 255, 0.85),
-        inset 0 -16px 24px rgba(20, 38, 31, 0.08);
-      touch-action: none;
-      user-select: none;
-      cursor: crosshair;
-      position: relative;
-      overflow: hidden;
-    }
-    .trackpad::before {
-      content: "";
-      position: absolute;
-      inset: 12px;
-      border: 1px solid rgba(15, 123, 95, 0.1);
-      border-radius: 14px;
-      pointer-events: none;
-    }
-    .trackpad.dragLocked {
-      border-color: rgba(29, 79, 145, 0.46);
-      box-shadow:
-        inset 0 2px 8px rgba(255, 255, 255, 0.85),
-        inset 0 -16px 24px rgba(20, 38, 31, 0.08),
-        0 0 0 4px rgba(29, 79, 145, 0.12);
-    }
-    .trackpadHint {
-      position: absolute;
-      left: 50%;
-      top: 50%;
-      transform: translate(-50%, -50%);
-      display: grid;
-      gap: 6px;
-      color: rgba(101, 113, 109, 0.82);
-      font-size: 14px;
-      font-weight: 700;
-      line-height: 1.35;
-      text-align: center;
-      pointer-events: none;
-    }
-    .orientationIndicator {
-      position: absolute;
-      top: 16px;
-      right: 16px;
-      width: 48px;
-      height: 48px;
-      border-radius: 50%;
-      background: rgba(255,255,255,0.82);
-      border: 2px solid var(--line);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      pointer-events: none;
-      transition: border-color 0.3s;
-    }
-    .orientationIndicator.active {
-      border-color: var(--accent);
-    }
-    .oiLine {
-      width: 2px;
-      height: 22px;
-      background: var(--line);
-      border-radius: 1px;
-      transition: background 0.3s, transform 0.15s;
-    }
-    .orientationIndicator.active .oiLine {
-      background: var(--accent);
-    }
-    .oiAngle {
-      display: none;
-      font-size: 9px;
-      font-weight: 700;
-      color: var(--muted);
-      margin-top: -2px;
-    }
-    .orientationIndicator.active .oiAngle {
-      display: block;
-    }
-    .tapDebug {
-      display: none;
-      min-height: 20px;
-      color: var(--muted);
-      font-size: 13px;
-      font-weight: 700;
-      text-align: center;
-    }
-    .mouseActions {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-    }
+    .options input { width: 20px; height: 20px; accent-color: var(--accent); }
+    .actions { display: flex; gap: 10px; margin-top: 10px; }
     button {
-      min-height: 48px;
+      min-height: 56px;
       border: 0;
       border-radius: 12px;
       padding: 0 18px;
       color: #fff;
       background: var(--accent);
       font: inherit;
+      font-size: 19px;
       font-weight: 800;
       cursor: pointer;
     }
-    .sendButton {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .primaryAction { grid-area: send; min-height: 106px; font-size: 20px; }
-    .escapeAction { grid-area: escape; }
-    .snippetsAction { grid-area: snippets; }
-    button.secondary { color: var(--accent); background: rgba(15, 123, 95, 0.1); }
-    button.keyButton {
-      color: var(--accent-2);
-      background: rgba(29, 79, 145, 0.1);
-    }
-    button.mouseButton { color: var(--accent-2); background: rgba(29, 79, 145, 0.12); }
+    .sendButton { flex: 1; }
+    button.secondary { color: var(--accent); background: rgba(15, 123, 95, 0.1); min-width: 96px; font-size: 15px; }
     button:disabled, button[aria-busy="true"] { opacity: 0.62; cursor: wait; }
-    .historyPanel { padding: 14px; background: rgba(255, 255, 255, 0.92); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); }
+    .statusbar {
+      padding: 12px 14px;
+      color: var(--muted);
+      font-size: 14px;
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .statusbar.error { color: var(--danger); }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
+    .dot.online { background: var(--accent); }
+    .dot.offline { background: var(--danger); }
     .historyHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
     .historyHeader h2 { margin: 0; font-size: 16px; }
+    .historyHeader button {
+      min-height: 0;
+      padding: 6px 12px;
+      border-radius: 999px;
+      color: var(--muted);
+      background: rgba(22, 33, 29, 0.08);
+      font-size: 13px;
+      font-weight: 700;
+    }
     .historyList { display: grid; gap: 8px; max-height: 32vh; overflow: auto; }
-    .historyItem { border: 1px solid var(--line); border-radius: 12px; padding: 10px; background: #fbfdfc; white-space: pre-wrap; word-break: break-word; font-size: 14px; line-height: 1.45; }
-    .historyItem.clickable { cursor: pointer; }
-    .historyItem.clickable:focus {
+    .historyList:empty::after {
+      content: "暂无发送记录";
+      color: var(--muted);
+      font-size: 14px;
+      padding: 4px 2px 10px;
+    }
+    .historyItem {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px;
+      background: #fbfdfc;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 14px;
+      line-height: 1.45;
+      cursor: pointer;
+    }
+    .historyItem:focus {
       border-color: var(--accent);
       box-shadow: 0 0 0 4px rgba(15, 123, 95, 0.12);
       outline: none;
     }
-    .historyMeta { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
-    .statusbar { padding: 12px 14px; color: var(--muted); font-size: 14px; min-height: 48px; }
-    .statusbar.error { color: var(--danger); }
-
-    /* ---- 触控板全屏模式 ---- */
-    .shell.trackpadMode {
-      grid-template-rows: 1fr auto;
-      min-height: calc(100vh - 32px);
-    }
-    .shell.trackpadMode .historyPanel {
-      display: none;
-    }
-    .shell.trackpadMode .composer {
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-    }
-    .shell.trackpadMode .touchpadPanel {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-    }
-    .shell.trackpadMode .trackpad {
-      flex: 1;
-      aspect-ratio: auto;
-      min-height: 0;
-    }
-
-    /* ---- 快捷指令弹窗 ---- */
-    .snippetOverlay {
-      position: fixed;
-      inset: 0;
-      background: rgba(22, 33, 29, 0.45);
-      backdrop-filter: blur(4px);
-      z-index: 100;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 20px;
-    }
-    .snippetOverlay[hidden] { display: none; }
-    .snippetPanel {
-      width: min(100%, 500px);
-      max-height: 80vh;
-      background: #fff;
-      border-radius: 18px;
-      box-shadow: var(--shadow);
-      display: grid;
-      grid-template-rows: auto 1fr auto;
-      overflow: hidden;
-    }
-    .snippetPanelHeader {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 16px 18px 12px;
-      border-bottom: 1px solid var(--line);
-    }
-    .snippetPanelHeader h3 { margin: 0; font-size: 18px; }
-    .snippetClose {
-      width: 36px;
-      height: 36px;
-      min-height: 0;
-      padding: 0;
-      border-radius: 50%;
-      background: rgba(22, 33, 29, 0.08);
-      color: var(--muted);
-      font-size: 20px;
-      line-height: 36px;
-      text-align: center;
-    }
-    .snippetList {
-      overflow: auto;
-      padding: 10px 18px;
-      display: grid;
-      gap: 8px;
-      align-content: start;
-    }
-    .snippetItem {
-      display: grid;
-      grid-template-columns: 1fr auto auto;
-      align-items: center;
-      gap: 8px;
-      padding: 12px 14px;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: #fbfdfc;
-      cursor: pointer;
-      transition: border-color 0.15s;
-    }
-    .snippetItem:active { border-color: var(--accent); background: rgba(15, 123, 95, 0.05); }
-    .snippetItemName { font-weight: 800; font-size: 15px; color: var(--ink); }
-    .snippetItemPreview {
-      font-size: 13px;
-      color: var(--muted);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      margin-top: 2px;
-    }
-    .snippetItemBtn {
-      min-height: 0;
-      width: 32px;
-      height: 32px;
-      padding: 0;
-      border-radius: 8px;
-      font-size: 16px;
-      line-height: 32px;
-      background: rgba(22, 33, 29, 0.06);
-      color: var(--muted);
-      text-align: center;
-    }
-    .snippetItemBtn.danger { background: rgba(183, 53, 53, 0.1); color: var(--danger); }
-    .snippetForm {
-      padding: 14px 18px;
-      border-top: 1px solid var(--line);
-      display: grid;
-      gap: 8px;
-    }
-    .snippetForm input, .snippetForm textarea {
-      width: 100%;
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 10px 14px;
-      font: inherit;
-      font-size: 15px;
-      outline: none;
-      background: #fbfdfc;
-    }
-    .snippetForm input:focus, .snippetForm textarea:focus {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px rgba(15, 123, 95, 0.1);
-    }
-    .snippetForm textarea { height: 80px; resize: vertical; }
-    .snippetFormActions { display: flex; gap: 8px; justify-content: flex-end; }
-    .snippetFormActions button { min-height: 40px; font-size: 14px; }
-    .snippetEmpty { text-align: center; color: var(--muted); padding: 24px; font-size: 15px; }
-
-    /* ---- 设置弹窗 ---- */
-    .settingsButton { padding: 0 10px; }
-    .settingsBody { padding: 14px 18px 18px; display: grid; gap: 16px; overflow: auto; }
-    .settingsGroup { display: grid; gap: 8px; }
-    .settingsLabel { font-size: 13px; font-weight: 800; color: var(--muted); }
-    .settingsOption {
-      display: grid;
-      grid-template-columns: auto 1fr;
-      grid-template-areas: "radio title" "radio desc";
-      column-gap: 10px;
-      align-items: center;
-      padding: 12px 14px;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: #fbfdfc;
-      cursor: pointer;
-    }
-    .settingsOption input[type="radio"] {
-      grid-area: radio;
-      width: 20px;
-      height: 20px;
-      accent-color: var(--accent);
-      margin: 0;
-    }
-    .settingsOptionTitle { grid-area: title; font-weight: 800; font-size: 15px; color: var(--ink); }
-    .settingsOptionDesc { grid-area: desc; font-size: 12px; color: var(--muted); }
-    .settingsOption:has(input:checked) {
-      border-color: var(--accent);
-      background: rgba(15, 123, 95, 0.06);
-    }
-    .serverList { display: grid; gap: 8px; }
-    .serverRow {
-      display: grid;
-      grid-template-columns: auto 1fr auto;
-      align-items: center;
-      gap: 10px;
-      padding: 10px 12px;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: #fbfdfc;
-      cursor: pointer;
-    }
-    .serverRow input[type="radio"] { width: 20px; height: 20px; accent-color: var(--accent); margin: 0; }
-    .serverRow:has(input:checked) { border-color: var(--accent); background: rgba(15, 123, 95, 0.06); }
-    .serverInfo { display: grid; gap: 2px; min-width: 0; }
-    .serverName { font-weight: 800; font-size: 14px; color: var(--ink); }
-    .serverHost { font-size: 12px; color: var(--muted); word-break: break-all; }
-    .serverAddForm { display: grid; gap: 8px; }
-    .serverAddForm input {
-      width: 100%;
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 10px 14px;
-      font: inherit;
-      font-size: 15px;
-      outline: none;
-      background: #fbfdfc;
-    }
-    .serverAddForm input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(15, 123, 95, 0.1); }
-    .serverAddButton { min-height: 40px; font-size: 14px; justify-self: start; }
-
-    @media (max-width: 520px) {
-      body { padding: 10px; }
-      .toolbar { grid-template-columns: 1fr; }
-      .actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; }
-      .textActions {
-        grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
-        grid-template-areas: "escape send" "snippets send";
-      }
-      .headerTools { gap: 8px; }
-      .textSurface { min-height: 260px; }
-      .composerHeader { align-items: flex-start; }
-      .snippetOverlay { padding: 10px; align-items: end; }
-      .snippetPanel { max-height: 70vh; border-radius: 18px 18px 0 0; }
-    }
   </style>
 </head>
 <body>
-  <main class="shell">
-    <section class="composer">
+  <div class="shell">
+    <section class="card">
       <div class="composerHeader">
-        <label for="text">输入内容</label>
-        <div class="headerTools">
-          <button id="settingsButton" class="modeToggle settingsButton" type="button" aria-label="设置" title="设置">⚙</button>
-          <button id="modeToggle" class="modeToggle" type="button">触控板</button>
-          <div class="totalChars">累计字数 <strong id="totalChars">0</strong></div>
-        </div>
+        <h1>远程输入板</h1>
+        <span class="totalChars">累计 <strong id="totalChars">0</strong> 字</span>
       </div>
-
-      <div id="textPanel" class="modePanel">
-        <div class="textSurface">
-          <textarea id="text" autofocus placeholder="在这里用豆包输入法语音输入"></textarea>
-          <!-- 自动发送倒计时区域（已隐藏，保留代码备用） -->
-          <div id="autoSendSentence" class="autoSendSentence">
-            <input id="autoSend" type="checkbox" aria-label="启用自动发送">
-            <span id="autoSendPrefix">在</span>
-            <input id="delaySeconds" type="number" inputmode="decimal" min="0.1" max="30" step="0.1" value="2">
-            <span id="autoSendSuffix">秒后自动发送！</span>
-          </div>
-          <!-- 回车行为切换：发送 / 换行 -->
-          <div id="enterBehaviorToggle" class="enterBehaviorToggle" role="switch" aria-checked="false" tabindex="0">
-            <span>当前：</span><span class="toggleLabel">回车发送</span>
-          </div>
-        </div>
-        <div class="actions textActions">
-          <button id="keyEscape" class="keyButton escapeAction" type="button">ESC</button>
-          <button id="send" class="sendButton primaryAction" type="button" aria-label="发送或回车">发送<span class="enterIcon" aria-hidden="true">⏎</span></button>
-          <button id="snippets" class="keyButton snippetsAction" type="button">快捷指令</button>
-        </div>
-      </div>
-
-      <div id="touchpadPanel" class="modePanel touchpadPanel" hidden>
-        <div id="trackpad" class="trackpad" role="application" aria-label="鼠标触控板">
-          <div class="trackpadHint">
-            <span>滑动控制鼠标</span>
-            <span>单指单击：左键</span>
-            <span>双指单击：右键</span>
-            <span>双指横放：上下滚动</span>
-            <span>双指竖放：左右滚动</span>
-            <span>双击按住：拖拽</span>
-          </div>
-          <div id="orientationIndicator" class="orientationIndicator">
-            <div class="oiLine"></div>
-            <span class="oiAngle"></span>
-          </div>
-        </div>
-        <div id="tapDebug" class="tapDebug">双击间隔：-- ms</div>
-        <div class="mouseActions">
-          <button id="mouseLeft" class="mouseButton" type="button">左键</button>
-          <button id="mouseRight" class="mouseButton" type="button">右键</button>
-          <button id="mouseKeyUp" class="keyButton" type="button">↑ 上键</button>
-          <button id="mouseKeyDown" class="keyButton" type="button">↓ 下键</button>
-        </div>
+      <textarea id="text" autofocus placeholder="在这里输入文字，点「发送」就会输入到电脑当前光标处……"></textarea>
+      <label class="options">
+        <input type="checkbox" id="sendOnEnter">
+        回车直接发送（Shift+回车换行）
+      </label>
+      <div class="actions">
+        <button class="sendButton" id="sendButton" type="button">发送</button>
+        <button class="secondary" id="clearButton" type="button">清空</button>
       </div>
     </section>
 
-    <section class="historyPanel">
+    <section class="card statusbar" id="statusbar">
+      <span class="dot" id="statusDot"></span>
+      <span id="statusText">正在连接……</span>
+    </section>
+
+    <section class="card">
       <div class="historyHeader">
-        <h2>最近 30 条发送历史</h2>
-        <button id="clearHistory" class="secondary" type="button">清空历史</button>
+        <h2>发送记录</h2>
+        <button id="clearHistory" type="button">清空记录</button>
       </div>
-      <div id="historyList" class="historyList"></div>
+      <div class="historyList" id="historyList"></div>
     </section>
-
-    <div id="status" class="statusbar">等待输入。</div>
-  </main>
-
-  <!-- 设置弹窗 -->
-  <div id="settingsOverlay" class="snippetOverlay" hidden>
-    <div class="snippetPanel">
-      <div class="snippetPanelHeader">
-        <h3>设置</h3>
-        <button id="settingsClose" class="snippetClose" type="button" aria-label="关闭">✕</button>
-      </div>
-      <div class="settingsBody">
-        <div class="settingsGroup">
-          <div class="settingsLabel">输入方式</div>
-          <label class="settingsOption">
-            <input type="radio" name="inputMethod" value="type">
-            <span class="settingsOptionTitle">键盘输入</span>
-            <span class="settingsOptionDesc">逐字模拟敲击，不碰剪贴板，适合大多数编辑器。</span>
-          </label>
-          <label class="settingsOption">
-            <input type="radio" name="inputMethod" value="paste">
-            <span class="settingsOptionTitle">剪贴板粘贴</span>
-            <span class="settingsOptionDesc">写入剪贴板后 Ctrl+V 粘贴，适合终端、游戏等敲击失灵的场景。</span>
-          </label>
-        </div>
-        <div class="settingsGroup">
-          <div class="settingsLabel">服务器（一个手机控多台电脑）</div>
-          <div id="serverList" class="serverList"></div>
-          <div id="serverAddForm" class="serverAddForm" hidden>
-            <input id="serverNameInput" placeholder="名称，如：客厅电脑">
-            <input id="serverHostInput" placeholder="地址 IP:端口，如 192.168.1.6:3210">
-            <div class="snippetFormActions">
-              <button id="serverAddCancel" class="secondary" type="button">取消</button>
-              <button id="serverAddSave" type="button">添加</button>
-            </div>
-          </div>
-          <button id="serverAddButton" class="secondary serverAddButton" type="button">+ 添加服务器</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 快捷指令弹窗 -->
-  <div id="snippetOverlay" class="snippetOverlay" hidden>
-    <div class="snippetPanel">
-      <div class="snippetPanelHeader">
-        <h3>快捷指令</h3>
-        <button id="snippetClose" class="snippetClose" type="button" aria-label="关闭">✕</button>
-      </div>
-      <div id="snippetList" class="snippetList"></div>
-      <div id="snippetForm" class="snippetForm" hidden>
-        <textarea id="snippetTextInput" placeholder="快捷指令内容"></textarea>
-        <div class="snippetFormActions">
-          <button id="snippetFormCancel" class="secondary" type="button">取消</button>
-          <button id="snippetFormSave" type="button">保存</button>
-        </div>
-      </div>
-    </div>
   </div>
 
   <script>
-    const AUTO_SEND_STORAGE_KEY = "remoteInput.autoSendEnabled";
-    const DELAY_STORAGE_KEY = "remoteInput.autoSendDelaySeconds";
-    const HISTORY_STORAGE_KEY = "remoteInput.history";
-    const TOTAL_CHARS_STORAGE_KEY = "remoteInput.totalChars";
-    const ENTER_BEHAVIOR_STORAGE_KEY = "remoteInput.enterNewlineMode";
-    const SETTINGS_STORAGE_KEY = "remoteInput.settings";
-    const SERVERS_STORAGE_KEY = "remoteInput.servers";
-    const SNIPPETS_STORAGE_KEY = "remoteInput.snippets";
-    const REALTIME_PATH = "/ws";
-    const HISTORY_LIMIT = 30;
-    const BACKSPACE_SENTINEL = "​";
-    const shell = document.querySelector(".shell");
     const text = document.getElementById("text");
-    const textPanel = document.getElementById("textPanel");
-    const touchpadPanel = document.getElementById("touchpadPanel");
-    const modeToggle = document.getElementById("modeToggle");
-    const trackpad = document.getElementById("trackpad");
-    const tapDebug = document.getElementById("tapDebug");
-    const orientationIndicator = document.getElementById("orientationIndicator");
-    const oiLine = orientationIndicator.querySelector(".oiLine");
-    const oiAngle = orientationIndicator.querySelector(".oiAngle");
-    const autoSend = document.getElementById("autoSend");
-    const delaySeconds = document.getElementById("delaySeconds");
-    const autoSendPrefix = document.getElementById("autoSendPrefix");
-    const autoSendSuffix = document.getElementById("autoSendSuffix");
-    const sendButton = document.getElementById("send");
-    const snippetsButton = document.getElementById("snippets");
-    const keyEscapeButton = document.getElementById("keyEscape");
-    const mouseLeftButton = document.getElementById("mouseLeft");
-    const mouseRightButton = document.getElementById("mouseRight");
-    const mouseKeyUpButton = document.getElementById("mouseKeyUp");
-    const mouseKeyDownButton = document.getElementById("mouseKeyDown");
-    const statusNode = document.getElementById("status");
+    const sendButton = document.getElementById("sendButton");
+    const clearButton = document.getElementById("clearButton");
+    const statusbar = document.getElementById("statusbar");
+    const statusDot = document.getElementById("statusDot");
+    const statusText = document.getElementById("statusText");
+    const totalCharsNode = document.getElementById("totalChars");
     const historyList = document.getElementById("historyList");
-    const clearHistory = document.getElementById("clearHistory");
-    const totalChars = document.getElementById("totalChars");
-    const enterBehaviorToggle = document.getElementById("enterBehaviorToggle");
-    const snippetOverlay = document.getElementById("snippetOverlay");
-    const snippetList = document.getElementById("snippetList");
-    const snippetForm = document.getElementById("snippetForm");
-    
-    const snippetTextInput = document.getElementById("snippetTextInput");
-    const snippetFormSave = document.getElementById("snippetFormSave");
-    const snippetFormCancel = document.getElementById("snippetFormCancel");
-    const snippetClose = document.getElementById("snippetClose");
-    const settingsButton = document.getElementById("settingsButton");
-    const settingsOverlay = document.getElementById("settingsOverlay");
-    const settingsClose = document.getElementById("settingsClose");
-    const inputMethodRadios = document.querySelectorAll('input[name="inputMethod"]');
-    const serverList = document.getElementById("serverList");
-    const serverAddForm = document.getElementById("serverAddForm");
-    const serverAddButton = document.getElementById("serverAddButton");
-    const serverAddCancel = document.getElementById("serverAddCancel");
-    const serverAddSave = document.getElementById("serverAddSave");
-    const serverNameInput = document.getElementById("serverNameInput");
-    const serverHostInput = document.getElementById("serverHostInput");
+    const clearHistoryButton = document.getElementById("clearHistory");
+    const sendOnEnterCheckbox = document.getElementById("sendOnEnter");
 
-    let pendingTimer = null;
-    let countdownStartedAt = 0;
+    const HISTORY_STORAGE_KEY = "remoteInput.history";
+    const ENTER_MODE_STORAGE_KEY = "remoteInput.sendOnEnter";
+    const TOTAL_CHARS_STORAGE_KEY = "remoteInput.totalChars";
+    const HISTORY_LIMIT = 20;
+
+    let socket = null;
+    let reconnectTimer = null;
+    let pingTimer = null;
+    let requestSeq = 0;
+    const pendingRequests = new Map();
     let sending = false;
-    let pendingEnterAfterSend = false;
-    let syncingKey = false;
-    let currentMode = "text";
-    const activeTrackpadPointers = new Map();
-    let tapStartedAt = 0;
-    let tapPointerCount = 0;
-    let tapMoved = false;
-    const TAP_MAX_MS = 220;
-    const TAP_MAX_MOVE = 8;
-    const DOUBLE_TAP_MAX_MS = 380;
-    const TRACKPAD_SPEED = 1.5;
-    const TRACKPAD_SCROLL_SCALE = 6;
-    let lastClickDownAt = 0;
-    let pendingSingleTapTimer = null;
-    let tapStartedDrag = false;
-    let dragLocked = false;
-    let doubleTapPending = false;
-    let doubleTapIntervalMs = null;
-    let orientationGamma = 0;
-    let orientationBeta = 0;
-    let orientationActive = false;
-    let pendingMouseDx = 0;
-    let pendingMouseDy = 0;
-    let pendingScrollDx = 0;
-    let pendingScrollDy = 0;
-    let mouseFrame = null;
-    let scrollFrame = null;
-    let realtimeSocket = null;
-    let realtimeReconnectTimer = null;
-    let realtimeRequestSeq = 0;
-    const realtimePending = new Map();
-    let settings = { inputMethod: "type" };
-    let servers = [];
-    let activeServerId = "";
-    const canUseBeforeInput = "onbeforeinput" in text;
-    let composerTextBeforeInput = "";
-    let enterNewlineMode = false;
-    let editingSnippetId = null;
-    const DEFAULT_SNIPPETS = [
-      { id: "1", text: "/compact" },
-      { id: "2", text: "/resume" },
-      { id: "3", text: "" },
-    ];
 
-    function getComposerText() {
-      return text.value.split(BACKSPACE_SENTINEL).join("");
+    function setStatus(message, state) {
+      statusText.textContent = message;
+      statusbar.classList.toggle("error", state === "error");
+      statusDot.className = "dot " + (state === "online" ? "online" : state === "offline" ? "offline" : "");
     }
 
-    function insertTextAtSelection(currentText, insertedText, selectionStart, selectionEnd) {
-      const hasValidSelection = Number.isInteger(selectionStart)
-        && Number.isInteger(selectionEnd)
-        && selectionStart >= 0
-        && selectionEnd >= selectionStart
-        && selectionEnd <= currentText.length;
-      const start = hasValidSelection ? selectionStart : currentText.length;
-      const end = hasValidSelection ? selectionEnd : currentText.length;
-      const textValue = currentText.slice(0, start) + insertedText + currentText.slice(end);
-      const caret = start + insertedText.length;
-      return { text: textValue, selectionStart: caret, selectionEnd: caret };
-    }
+    function genId() { return ++requestSeq; }
 
-    function placeCaretAtComposerEnd() {
-      try { text.setSelectionRange(text.value.length, text.value.length); } catch {}
-    }
+    /* ---------- WebSocket ---------- */
+    function connectRealtime() {
+      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      socket = new WebSocket(protocol + "//" + location.host + "/ws");
 
-    function ensureBackspaceSentinel() {
-      if (getComposerText() !== "") return;
-      if (text.value !== BACKSPACE_SENTINEL) text.value = BACKSPACE_SENTINEL;
-      placeCaretAtComposerEnd();
-    }
+      socket.addEventListener("open", () => {
+        setStatus("已连接（实时通道），发送前请先在电脑上点好输入位置。", "online");
+        schedulePing();
+      });
 
-    function setComposerText(value) {
-      text.value = value || BACKSPACE_SENTINEL;
-      placeCaretAtComposerEnd();
-    }
-
-    function restoreBackspaceSentinelAfterDelete(event) {
-      if (event.inputType === "deleteContentBackward" && composerTextBeforeInput === "" && !text.value.includes(BACKSPACE_SENTINEL)) syncBackspace();
-      ensureBackspaceSentinel();
-    }
-
-    function focusComposerAt(selectionStart, selectionEnd) {
-      if (currentMode !== "text") return;
-      try { text.focus({ preventScroll: true }); } catch { text.focus(); }
-      ensureBackspaceSentinel();
-      const hasValidSelection = Number.isInteger(selectionStart)
-        && Number.isInteger(selectionEnd)
-        && selectionStart >= 0
-        && selectionEnd >= selectionStart
-        && selectionEnd <= text.value.length;
-      if (hasValidSelection) {
-        try { text.setSelectionRange(selectionStart, selectionEnd); return; } catch {}
-      }
-      placeCaretAtComposerEnd();
-    }
-
-    function focusComposer() {
-      focusComposerAt(null, null);
-    }
-
-    function keepComposerFocus(event) {
-      if (currentMode !== "text") return;
-      event.preventDefault();
-      focusComposer();
-    }
-
-    function primeMobileKeyboard() { focusComposer(); setTimeout(focusComposer, 200); }
-
-    function focusComposerOnFirstTouch() {
-      if (document.activeElement !== text) focusComposer();
-      document.removeEventListener("pointerdown", focusComposerOnFirstTouch);
-      document.removeEventListener("touchstart", focusComposerOnFirstTouch);
-    }
-
-    function setMode(mode) {
-      currentMode = mode;
-      const mouseMode = mode === "mouse";
-      textPanel.hidden = mouseMode;
-      touchpadPanel.hidden = !mouseMode;
-      modeToggle.textContent = mouseMode ? "输入" : "触控板";
-      shell.classList.toggle("trackpadMode", mouseMode);
-      stopCountdown();
-      if (mouseMode) { text.blur(); setStatus("触控板模式。"); requestOrientationPermission(); }
-      else { if (dragLocked) setDragLocked(false); resetClickChain(); setStatus("输入模式。"); focusComposer(); }
-    }
-
-    // ---- 快捷指令 ----
-    function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
-
-    let snippetsCache = null;
-
-    // 快捷指令存在手机本地，切服务器也随身走；首次打开时从当前服务器导入一次，避免旧数据丢失
-    function loadLocalSnippets() {
-      try {
-        const raw = window.localStorage.getItem(SNIPPETS_STORAGE_KEY);
-        if (raw) {
-          const p = JSON.parse(raw);
-          if (Array.isArray(p)) return p.filter(s => s && typeof s.id === "string");
+      socket.addEventListener("message", (event) => {
+        let payload;
+        try { payload = JSON.parse(event.data); } catch { return; }
+        if (typeof payload.id === "number" && pendingRequests.has(payload.id)) {
+          const { resolve, reject } = pendingRequests.get(payload.id);
+          pendingRequests.delete(payload.id);
+          payload.ok ? resolve(payload) : reject(new Error(payload.error || "发送失败"));
         }
-      } catch {}
-      return null;
+        if (typeof payload.totalChars === "number") updateTotalChars(payload.totalChars);
+      });
+
+      socket.addEventListener("close", () => {
+        clearInterval(pingTimer);
+        failAllPending(new Error("实时通道已断开"));
+        setStatus("实时通道未连接，将改用 HTTP 发送。", "offline");
+        scheduleReconnect();
+      });
+
+      socket.addEventListener("error", () => { try { socket.close(); } catch {} });
     }
 
-    function saveLocalSnippets(snippets) {
-      window.localStorage.setItem(SNIPPETS_STORAGE_KEY, JSON.stringify(snippets));
+    function scheduleReconnect() {
+      if (reconnectTimer !== null) return;
+      reconnectTimer = setTimeout(() => { reconnectTimer = null; connectRealtime(); }, 1000);
     }
 
-    async function loadSnippets() {
-      const local = loadLocalSnippets();
-      if (local) { snippetsCache = local; return local; }
-      try {
-        if (realtimeSocket && realtimeSocket.readyState === WebSocket.OPEN) {
-          const result = await sendRealtimeRequest({ type: "getSnippets" });
-          if (Array.isArray(result.snippets)) { saveLocalSnippets(result.snippets); snippetsCache = result.snippets; return result.snippets; }
+    function schedulePing() {
+      clearInterval(pingTimer);
+      pingTimer = setInterval(() => {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: "ping" }));
         }
-        const result = await fetchJson("/api/snippets");
-        if (result.ok && Array.isArray(result.snippets)) { saveLocalSnippets(result.snippets); snippetsCache = result.snippets; return result.snippets; }
-      } catch {}
-      const defaults = DEFAULT_SNIPPETS.map(s => ({ ...s }));
-      saveLocalSnippets(defaults);
-      snippetsCache = defaults;
-      return defaults;
+      }, 25000);
     }
 
-    function saveSnippets(snippets) {
-      snippetsCache = snippets;
-      saveLocalSnippets(snippets);
+    function failAllPending(error) {
+      for (const { reject } of pendingRequests.values()) reject(error);
+      pendingRequests.clear();
     }
 
-    async function renderSnippetList() {
-      const snippets = await loadSnippets();
-      snippetList.innerHTML = "";
-      if (snippets.length === 0) {
-        snippetList.innerHTML = '<div class="snippetEmpty">暂无快捷指令，在下方添加。</div>';
+    function sendRealtime(payloadText) {
+      return new Promise((resolve, reject) => {
+        const id = genId();
+        pendingRequests.set(id, { resolve, reject });
+        socket.send(JSON.stringify({ type: "type", id, text: payloadText }));
+      });
+    }
+
+    async function sendViaHttp(payloadText) {
+      const response = await fetch("/api/type", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: payloadText }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) throw new Error(payload.error || "发送失败");
+      return payload;
+    }
+
+    /* ---------- 发送 ---------- */
+    async function sendText() {
+      if (sending) return;
+      const payloadText = text.value;
+      if (!payloadText.trim()) {
+        setStatus("请输入要发送的文字。", "error");
+        text.focus();
         return;
       }
-      for (const s of snippets) {
-        const row = document.createElement("div");
-        row.className = "snippetItem";
-        const displayText = s.text ? s.text : "（清空输入框）";
-        const isEmpty = !s.text;
-        row.innerHTML =
-          '<div class="snippetItemPreview"' + (isEmpty ? ' style="color:#b73535;font-style:italic"' : '') + '>' + escapeHtml(displayText) + '</div>' +
-          '<button class="snippetItemBtn" data-action="edit" title="编辑">✎</button>' +
-          '<button class="snippetItemBtn danger" data-action="delete" title="删除">✕</button>';
-        row.addEventListener("click", (e) => {
-          if (e.target.closest("[data-action]")) return;
-          applySnippet(s);
-        });
-        row.querySelector("[data-action=edit]").addEventListener("click", () => startEditSnippet(s));
-        row.querySelector("[data-action=delete]").addEventListener("click", () => deleteSnippet(s.id));
-        snippetList.appendChild(row);
-      }
-    }
-
-    function escapeHtml(str) {
-      const div = document.createElement("div");
-      div.textContent = str;
-      return div.innerHTML;
-    }
-
-    async function applySnippet(snippet) {
-      closeSnippetModal();
-      if (snippet.text) {
-        setComposerText(snippet.text);
-        sendText({ source: "snippet" });
-      } else {
-        stopCountdown();
-        text.value = BACKSPACE_SENTINEL;
-        setStatus("已清空。");
-        focusComposer();
-      }
-    }
-
-    async function deleteSnippet(id) {
-      if (!window.confirm("确定要删除这条快捷指令吗？")) return;
-      const snippets = (await loadSnippets()).filter(s => s.id !== id);
-      await saveSnippets(snippets);
-      renderSnippetList();
-      setStatus("快捷指令已删除。");
-    }
-
-    function startAddSnippet() {
-      editingSnippetId = null;
-      snippetTextInput.value = "";
-      snippetForm.hidden = false;
-      snippetTextInput.focus();
-    }
-
-    function startEditSnippet(snippet) {
-      editingSnippetId = snippet.id;
-      snippetTextInput.value = snippet.text;
-      snippetForm.hidden = false;
-      snippetTextInput.focus();
-    }
-
-    function cancelSnippetForm() {
-      editingSnippetId = null;
-      snippetForm.hidden = true;
-      snippetTextInput.value = "";
-    }
-
-    async function saveSnippetForm() {
-      const textVal = snippetTextInput.value;
-      const snippets = await loadSnippets();
-      if (editingSnippetId) {
-        const idx = snippets.findIndex(s => s.id === editingSnippetId);
-        if (idx !== -1) snippets[idx].text = textVal;
-      } else {
-        snippets.push({ id: genId(), text: textVal });
-      }
-      await saveSnippets(snippets);
-      cancelSnippetForm();
-      renderSnippetList();
-      setStatus(editingSnippetId ? "快捷指令已更新。" : "快捷指令已添加。");
-    }
-
-    async function openSnippetModal() {
-      snippetOverlay.hidden = false;
-      cancelSnippetForm();
-      await renderSnippetList();
-      snippetList.scrollTop = 0;
-    }
-
-    function closeSnippetModal() {
-      snippetOverlay.hidden = true;
-      cancelSnippetForm();
-    }
-
-    snippetClose.addEventListener("click", closeSnippetModal);
-    snippetOverlay.addEventListener("click", (e) => { if (e.target === snippetOverlay) closeSnippetModal(); });
-    snippetFormSave.addEventListener("click", saveSnippetForm);
-    snippetFormCancel.addEventListener("click", cancelSnippetForm);
-    snippetsButton.addEventListener("click", openSnippetModal);
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && !snippetOverlay.hidden) { closeSnippetModal(); e.preventDefault(); }
-      if (e.key === "Escape" && !settingsOverlay.hidden) { closeSettingsModal(); e.preventDefault(); }
-    });
-
-    // ---- 设置（存手机本地，切换服务器也随身走） ----
-    function loadSavedSettings() {
+      sending = true;
+      sendButton.setAttribute("aria-busy", "true");
+      sendButton.textContent = "发送中……";
+      const online = socket && socket.readyState === WebSocket.OPEN;
+      if (!online) setStatus("正在通过 HTTP 发送……", "offline");
       try {
-        const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
-        if (raw) {
-          const p = JSON.parse(raw);
-          if (p && (p.inputMethod === "type" || p.inputMethod === "paste")) settings = { inputMethod: p.inputMethod };
+        const result = online ? await sendRealtime(payloadText) : await sendViaHttp(payloadText);
+        addHistoryItem(payloadText);
+        if (typeof result.totalChars === "number") {
+          updateTotalChars(result.totalChars);
+        } else {
+          updateTotalChars(loadLocalTotalChars() + [...payloadText].length);
         }
-      } catch {}
-    }
-
-    function applySettings(next) {
-      if (!next || typeof next !== "object") return;
-      if (next.inputMethod === "type" || next.inputMethod === "paste") settings.inputMethod = next.inputMethod;
-      window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
-      for (const r of inputMethodRadios) r.checked = r.value === settings.inputMethod;
-    }
-
-    function saveSettings(next) {
-      applySettings(next);
-      setStatus("设置已保存：输入方式 = " + (settings.inputMethod === "paste" ? "剪贴板粘贴" : "键盘输入") + "。");
-    }
-
-    function openSettingsModal() {
-      for (const r of inputMethodRadios) r.checked = r.value === settings.inputMethod;
-      renderServerList();
-      settingsOverlay.hidden = false;
-      setStatus("输入方式：" + (settings.inputMethod === "paste" ? "剪贴板粘贴" : "键盘输入") + "。");
-    }
-
-    function closeSettingsModal() {
-      closeServerAdd();
-      settingsOverlay.hidden = true;
-    }
-
-    settingsButton.addEventListener("click", openSettingsModal);
-    settingsClose.addEventListener("click", closeSettingsModal);
-    settingsOverlay.addEventListener("click", (e) => { if (e.target === settingsOverlay) closeSettingsModal(); });
-    for (const r of inputMethodRadios) {
-      r.addEventListener("change", () => { if (r.checked) saveSettings({ inputMethod: r.value }); });
-    }
-
-    // ---- 多服务器切换（存在手机本地，一个面板控制多台电脑） ----
-    function getActiveServerHost() {
-      const s = servers.find(x => x.id === activeServerId);
-      return s ? s.host : window.location.host;
-    }
-
-    function loadSavedServers() {
-      try {
-        const raw = window.localStorage.getItem(SERVERS_STORAGE_KEY);
-        if (!raw) return;
-        const p = JSON.parse(raw);
-        if (Array.isArray(p.list)) servers = p.list.filter(s => s && typeof s.id === "string" && typeof s.host === "string");
-        if (typeof p.activeId === "string") activeServerId = p.activeId;
-      } catch {}
-    }
-
-    function saveServers() {
-      window.localStorage.setItem(SERVERS_STORAGE_KEY, JSON.stringify({ list: servers, activeId: activeServerId }));
-    }
-
-    function renderServerList() {
-      serverList.innerHTML = "";
-      serverList.appendChild(makeServerRow({ id: "", name: "当前电脑（本页）", host: window.location.host }));
-      for (const s of servers) serverList.appendChild(makeServerRow(s));
-    }
-
-    function makeServerRow(s) {
-      const row = document.createElement("label");
-      row.className = "serverRow";
-      const radio = document.createElement("input");
-      radio.type = "radio"; radio.name = "activeServer"; radio.value = s.id;
-      radio.checked = s.id === activeServerId;
-      radio.addEventListener("change", () => { if (radio.checked) selectServer(s.id); });
-      const info = document.createElement("span");
-      info.className = "serverInfo";
-      info.innerHTML = "<span class='serverName'>" + escapeHtml(s.name) + "</span><span class='serverHost'>" + escapeHtml(s.host) + "</span>";
-      row.appendChild(radio); row.appendChild(info);
-      if (s.id !== "") {
-        const del = document.createElement("button");
-        del.type = "button"; del.className = "snippetItemBtn danger"; del.textContent = "✕"; del.title = "删除";
-        del.addEventListener("click", (e) => { e.preventDefault(); removeServer(s.id); });
-        row.appendChild(del);
-      }
-      return row;
-    }
-
-    function selectServer(id) {
-      if (activeServerId === id) { renderServerList(); return; }
-      activeServerId = id;
-      saveServers();
-      renderServerList();
-      setStatus("已切换到服务器：" + getActiveServerHost() + "。");
-      applyActiveServer();
-    }
-
-    function applyActiveServer() {
-      if (realtimeSocket) { try { realtimeSocket.close(); } catch {} realtimeSocket = null; }
-      connectRealtime();
-      loadTotalChars();
-    }
-
-    function openServerAdd() {
-      serverAddForm.hidden = false;
-      serverAddButton.hidden = true;
-      serverNameInput.focus();
-    }
-
-    function closeServerAdd() {
-      serverAddForm.hidden = true;
-      serverAddButton.hidden = false;
-      serverNameInput.value = "";
-      serverHostInput.value = "";
-    }
-
-    function saveServerAdd() {
-      const name = serverNameInput.value.trim();
-      let host = serverHostInput.value.trim();
-      if (!host) { setStatus("请输入服务器地址", true); return; }
-      host = host.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim();
-      if (!host) { setStatus("服务器地址无效", true); return; }
-      if (!host.includes(":")) host = host + ":3210";
-      servers.push({ id: genId(), name: name || host, host });
-      saveServers();
-      closeServerAdd();
-      renderServerList();
-      setStatus("已添加服务器 " + host + "，点它即可切换。");
-    }
-
-    function removeServer(id) {
-      const wasActive = activeServerId === id;
-      servers = servers.filter(s => s.id !== id);
-      if (wasActive) {
-        activeServerId = "";
-        saveServers();
-        applyActiveServer();
-        setStatus("已删除当前服务器，已切回本页电脑。");
-      } else {
-        saveServers();
-      }
-      renderServerList();
-    }
-
-    serverAddButton.addEventListener("click", openServerAdd);
-    serverAddCancel.addEventListener("click", closeServerAdd);
-    serverAddSave.addEventListener("click", saveServerAdd);
-
-    // ---- 回车行为切换 ----
-    function loadSavedEnterBehavior() {
-      enterNewlineMode = window.localStorage.getItem(ENTER_BEHAVIOR_STORAGE_KEY) === "true";
-      updateEnterBehaviorUI();
-    }
-
-    function saveEnterBehavior() {
-      window.localStorage.setItem(ENTER_BEHAVIOR_STORAGE_KEY, enterNewlineMode ? "true" : "false");
-    }
-
-    function updateEnterBehaviorUI() {
-      if (enterNewlineMode) {
-        enterBehaviorToggle.classList.add("newlineMode");
-        enterBehaviorToggle.querySelector(".toggleLabel").textContent = "回车换行";
-        enterBehaviorToggle.setAttribute("aria-checked", "true");
-      } else {
-        enterBehaviorToggle.classList.remove("newlineMode");
-        enterBehaviorToggle.querySelector(".toggleLabel").textContent = "回车发送";
-        enterBehaviorToggle.setAttribute("aria-checked", "false");
+        text.value = "";
+        setStatus("已发送 " + [...payloadText].length + " 字，继续输入下一条吧。", "online");
+        text.focus();
+      } catch (error) {
+        setStatus("发送失败：" + error.message, "error");
+      } finally {
+        sending = false;
+        sendButton.removeAttribute("aria-busy");
+        sendButton.textContent = "发送";
       }
     }
 
-    function toggleEnterBehavior() {
-      enterNewlineMode = !enterNewlineMode;
-      updateEnterBehaviorUI();
-      saveEnterBehavior();
-      setStatus(enterNewlineMode ? "回车键将插入换行。" : "回车键将发送文本。");
-      focusComposer();
-    }
+    sendButton.addEventListener("click", sendText);
+    clearButton.addEventListener("click", () => { text.value = ""; text.focus(); });
 
-    enterBehaviorToggle.addEventListener("click", toggleEnterBehavior);
-    enterBehaviorToggle.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleEnterBehavior(); }
+    sendOnEnterCheckbox.checked = localStorage.getItem(ENTER_MODE_STORAGE_KEY) === "true";
+    sendOnEnterCheckbox.addEventListener("change", () => {
+      localStorage.setItem(ENTER_MODE_STORAGE_KEY, sendOnEnterCheckbox.checked ? "true" : "false");
+      text.focus();
     });
 
+    text.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && sendOnEnterCheckbox.checked && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        sendText();
+      }
+    });
+
+    /* ---------- 累计字数 ---------- */
+    function loadLocalTotalChars() {
+      const value = Number.parseInt(localStorage.getItem(TOTAL_CHARS_STORAGE_KEY) || "0", 10);
+      return Number.isFinite(value) && value > 0 ? value : 0;
+    }
+    function updateTotalChars(count) {
+      const merged = Math.max(loadLocalTotalChars(), count);
+      localStorage.setItem(TOTAL_CHARS_STORAGE_KEY, String(merged));
+      totalCharsNode.textContent = merged.toLocaleString("zh-CN");
+    }
+    updateTotalChars(loadLocalTotalChars());
+
+    async function loadServerTotalChars() {
+      try {
+        const response = await fetch("/api/stats");
+        const payload = await response.json();
+        if (payload.ok && typeof payload.totalChars === "number") updateTotalChars(payload.totalChars);
+      } catch {}
+    }
+
+    /* ---------- 本地发送记录 ---------- */
     function loadHistory() {
-      try { const raw = window.localStorage.getItem(HISTORY_STORAGE_KEY); return raw ? JSON.parse(raw) : []; }
+      try { return JSON.parse(localStorage.getItem(HISTORY_STORAGE_KEY) || "[]"); }
       catch { return []; }
     }
-
-    function saveHistory(items) {
-      window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(items.slice(0, HISTORY_LIMIT)));
-    }
-
-    function normalizeTotalChars(value) {
-      const count = Number.parseInt(value, 10);
-      return Number.isFinite(count) && count > 0 ? count : 0;
-    }
-
-    function updateTotalChars(count) { totalChars.textContent = count.toLocaleString("zh-CN"); }
-
-    // 累计字数以手机本地为准（成就感跟手机走），服务器存的是备份；
-    // 因为只增不减，本地和备份取最大值合并，永远不回退。
-    function loadLocalTotalChars() {
-      return normalizeTotalChars(window.localStorage.getItem(TOTAL_CHARS_STORAGE_KEY));
-    }
-
-    function saveStatsToServer(total) {
-      if (realtimeSocket && realtimeSocket.readyState === WebSocket.OPEN) {
-        try { realtimeSocket.send(JSON.stringify({ type: "setStats", totalChars: total })); } catch {}
-      }
-    }
-
-    async function loadTotalChars() {
-      const local = loadLocalTotalChars();
-      try {
-        let serverTotal;
-        if (realtimeSocket && realtimeSocket.readyState === WebSocket.OPEN) {
-          const result = await sendRealtimeRequest({ type: "getStats" });
-          serverTotal = normalizeTotalChars(result.totalChars);
-        } else {
-          const result = await fetchJson("/api/stats");
-          serverTotal = normalizeTotalChars(result.totalChars);
-        }
-        const next = Math.max(local, serverTotal);
-        setTotalChars(next);
-        if (next > serverTotal) saveStatsToServer(next);
-      } catch { setTotalChars(local); }
-    }
-
-    function setTotalChars(count) {
-      const normalized = normalizeTotalChars(count);
-      window.localStorage.setItem(TOTAL_CHARS_STORAGE_KEY, normalized.toString());
-      updateTotalChars(normalized);
-    }
-
-    function applyHistoryItem(item) {
-      if (item.kind !== "text" || typeof item.text !== "string") return;
-      stopCountdown();
-      const currentText = getComposerText();
-      const inserted = insertTextAtSelection(
-        currentText,
-        item.text,
-        text.selectionStart,
-        text.selectionEnd,
-      );
-      text.value = inserted.text || BACKSPACE_SENTINEL;
-      setStatus("已插入历史记录，可编辑后发送。");
-      document.querySelector(".composer").scrollIntoView({ behavior: "smooth", block: "start" });
-      focusComposerAt(inserted.selectionStart, inserted.selectionEnd);
-    }
+    function saveHistory(items) { localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(items)); }
 
     function renderHistory() {
-      const items = loadHistory();
-      historyList.innerHTML = "";
-      if (items.length === 0) { historyList.innerHTML = '<div class="historyItem">暂无发送历史。</div>'; return; }
-      for (const item of items) {
+      historyList.textContent = "";
+      for (const item of loadHistory()) {
         const node = document.createElement("div");
         node.className = "historyItem";
-        if (item.kind === "text" && typeof item.text === "string") {
-          node.classList.add("clickable");
-          node.setAttribute("role", "button"); node.setAttribute("tabindex", "0");
-          node.addEventListener("click", () => applyHistoryItem(item));
-          node.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); applyHistoryItem(item); } });
-        }
-        const meta = document.createElement("div"); meta.className = "historyMeta"; meta.textContent = new Date(item.createdAt).toLocaleString();
-        const body = document.createElement("div"); body.textContent = item.kind === "key" ? "[按键] " + item.key : item.text;
-        node.appendChild(meta); node.appendChild(body);
+        node.tabIndex = 0;
+        node.textContent = item.text;
+        node.title = "点击填回输入框";
+        const refill = () => { text.value = item.text; text.focus(); };
+        node.addEventListener("click", refill);
+        node.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") { event.preventDefault(); refill(); }
+        });
         historyList.appendChild(node);
       }
     }
 
-    function addHistoryItem(item) { const items = loadHistory(); items.unshift({ ...item, createdAt: new Date().toISOString() }); saveHistory(items); renderHistory(); }
-
-    function setStatus(message, isError = false) { statusNode.textContent = message; statusNode.classList.toggle("error", isError); }
-
-    function stopCountdown() { clearTimeout(pendingTimer); pendingTimer = null; }
-
-    function normalizeDelaySeconds(value) { const s = Number.parseFloat(value); if (!Number.isFinite(s) || s <= 0) return 2; return Math.min(30, Math.max(0.1, s)); }
-
-    function loadSavedDelay() { const v = window.localStorage.getItem(DELAY_STORAGE_KEY); if (v !== null) delaySeconds.value = normalizeDelaySeconds(v).toString(); }
-
-    function loadSavedAutoSend() {
-      // 自动发送 UI 已隐藏，强制关闭；重新显示 UI 后可恢复读取 localStorage
-      autoSend.checked = false;
+    function addHistoryItem(value) {
+      const items = loadHistory().filter((item) => item.text !== value);
+      items.unshift({ text: value, createdAt: new Date().toISOString() });
+      saveHistory(items.slice(0, HISTORY_LIMIT));
+      renderHistory();
     }
 
-    function saveAutoSend() { window.localStorage.setItem(AUTO_SEND_STORAGE_KEY, autoSend.checked ? "true" : "false"); }
-
-    function renderAutoSendCopy() { autoSendPrefix.textContent = autoSend.checked ? "在" : "要在"; autoSendSuffix.textContent = autoSend.checked ? "秒后自动发送！" : "秒后自动发送吗？"; }
-
-    function saveDelayDraft() { window.localStorage.setItem(DELAY_STORAGE_KEY, delaySeconds.value); }
-
-    function commitDelay() { delaySeconds.value = normalizeDelaySeconds(delaySeconds.value).toString(); window.localStorage.setItem(DELAY_STORAGE_KEY, delaySeconds.value); }
-
-    function getAutoSendDelay() { return normalizeDelaySeconds(delaySeconds.value) * 1000; }
-
-    function startCountdown() {
-      stopCountdown();
-      if (!autoSend.checked || sending || !getComposerText().trim()) return;
-      const d = getAutoSendDelay(); countdownStartedAt = Date.now();
-      setStatus("停止输入后 " + (d / 1000).toString() + " 秒自动发送。");
-      pendingTimer = setTimeout(() => sendText({ source: "auto" }), d);
-    }
-
-    function getApiBase() {
-      const host = getActiveServerHost();
-      return host === window.location.host ? "" : window.location.protocol + "//" + host;
-    }
-
-    function getRealtimeUrl() {
-      const host = getActiveServerHost();
-      return (window.location.protocol === "https:" ? "wss:" : "ws:") + "//" + host + REALTIME_PATH;
-    }
-
-    function scheduleRealtimeReconnect() { if (realtimeReconnectTimer !== null) return; realtimeReconnectTimer = window.setTimeout(() => { realtimeReconnectTimer = null; connectRealtime(); }, 900); }
-
-    function connectRealtime() {
-      if (!("WebSocket" in window)) return;
-      if (realtimeSocket && (realtimeSocket.readyState === WebSocket.OPEN || realtimeSocket.readyState === WebSocket.CONNECTING)) return;
-      try { realtimeSocket = new WebSocket(getRealtimeUrl()); } catch { realtimeSocket = null; return; }
-      realtimeSocket.addEventListener("open", () => {
-        if (realtimeReconnectTimer !== null) { window.clearTimeout(realtimeReconnectTimer); realtimeReconnectTimer = null; }
-        loadTotalChars();
-      });
-      realtimeSocket.addEventListener("message", (event) => {
-        try {
-          const p = JSON.parse(event.data);
-          if (!p) return;
-          if (p.id && realtimePending.has(p.id)) {
-            const pending = realtimePending.get(p.id);
-            realtimePending.delete(p.id);
-            window.clearTimeout(pending.timer);
-            if (p.ok === false) pending.reject(new Error(p.error || "请求失败"));
-            else pending.resolve(p);
-            return;
-          }
-          if (p.ok === false) setStatus(p.error || "实时控制失败", true);
-        } catch {}
-      });
-      realtimeSocket.addEventListener("close", scheduleRealtimeReconnect);
-      realtimeSocket.addEventListener("error", () => { try { realtimeSocket.close(); } catch {} });
-    }
-
-    function sendRealtimeRequest(message, timeoutMs = 30000) {
-      return new Promise((resolve, reject) => {
-        if (!realtimeSocket || realtimeSocket.readyState !== WebSocket.OPEN) { reject(new Error("实时通道未连接")); return; }
-        const id = (++realtimeRequestSeq).toString(36);
-        const timer = window.setTimeout(() => { realtimePending.delete(id); reject(new Error("实时响应超时")); }, timeoutMs);
-        realtimePending.set(id, { resolve, reject, timer });
-        try { realtimeSocket.send(JSON.stringify({ ...message, id })); }
-        catch (e) { realtimePending.delete(id); window.clearTimeout(timer); reject(e); }
-      });
-    }
-
-    async function sendRealtime(message, fallback) {
-      if (realtimeSocket && realtimeSocket.readyState === WebSocket.OPEN) { try { realtimeSocket.send(JSON.stringify(message)); return { ok: true, realtime: true }; } catch {} }
-      connectRealtime(); return fallback();
-    }
-
-    async function fetchJson(url, options = {}) { const r = await fetch(getApiBase() + url, options); const j = await r.json(); if (!r.ok) throw new Error(j.error || "请求失败"); return j; }
-
-    async function postJson(url, payload) { const r = await fetch(getApiBase() + url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); const j = await r.json(); if (!r.ok) throw new Error(j.error || "请求失败"); return j; }
-
-    function flushMouseMove() { mouseFrame = null; const dx = Math.round(pendingMouseDx), dy = Math.round(pendingMouseDy); pendingMouseDx -= dx; pendingMouseDy -= dy; if (dx || dy) syncMouseMove(dx, dy); }
-    function queueMouseMove(dx, dy) { pendingMouseDx += dx; pendingMouseDy += dy; if (mouseFrame === null) mouseFrame = window.requestAnimationFrame(flushMouseMove); }
-    function flushMouseScroll() { scrollFrame = null; const dx = Math.round(pendingScrollDx), dy = Math.round(pendingScrollDy); pendingScrollDx = 0; pendingScrollDy = 0; if (dx || dy) syncMouseScroll(dx, dy); }
-    function queueMouseScroll(dx, dy) { pendingScrollDx += dx; pendingScrollDy += dy; if (scrollFrame === null) scrollFrame = window.requestAnimationFrame(flushMouseScroll); }
-    function scaleTrackpadDelta(dx, dy) { return { dx: dx * TRACKPAD_SPEED, dy: dy * TRACKPAD_SPEED }; }
-    function getTwoFingerScrollAxis() { const p = Array.from(activeTrackpadPointers.values()); if (p.length < 2) return null; return Math.abs(p[1].lastX - p[0].lastX) >= Math.abs(p[1].lastY - p[0].lastY) ? "vertical" : "horizontal"; }
-
-    function handleDeviceOrientation(event) {
-      if (event.gamma !== null) {
-        orientationGamma = event.gamma;
-        orientationBeta = event.beta;
-        if (!orientationActive) {
-          orientationActive = true;
-          orientationIndicator.classList.add("active");
-          setStatus("方向校正已激活 (陀螺仪)");
-        }
-        oiLine.style.transform = "rotate(" + orientationGamma + "deg)";
-        oiAngle.textContent = Math.round(orientationGamma) + "°";
-      }
-    }
-
-    function handleDeviceMotion(event) {
-      var acc = event.accelerationIncludingGravity;
-      if (!acc || acc.x === null) return;
-      var x = acc.x, y = acc.y, z = acc.z;
-      if (z === 0 && x === 0) return;
-      var gamma = Math.atan2(x, Math.max(Math.abs(z), 0.01)) * 180 / Math.PI;
-      var beta = Math.atan2(y, Math.sqrt(x * x + z * z)) * 180 / Math.PI;
-      orientationGamma = gamma;
-      orientationBeta = beta;
-      if (!orientationActive) {
-        orientationActive = true;
-        orientationIndicator.classList.add("active");
-        setStatus("方向校正已激活 (加速度计)");
-      }
-      oiLine.style.transform = "rotate(" + gamma + "deg)";
-      oiAngle.textContent = Math.round(gamma) + "°";
-    }
-
-    function tryDeviceMotion() {
-      if (orientationActive) return;
-      if (typeof DeviceMotionEvent === "undefined" && !("DeviceMotionEvent" in window)) {
-        setStatus("运动传感器不可用 (HTTP环境受限)", true);
-        return;
-      }
-      if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
-        DeviceMotionEvent.requestPermission()
-          .then(function (state) {
-            if (state === "granted") { window.addEventListener("devicemotion", handleDeviceMotion); setStatus("加速度计已授权，倾斜手机..."); }
-            else setStatus("运动传感器权限被拒", true);
-          })
-          .catch(function () { setStatus("运动传感器权限请求失败", true); });
-      } else {
-        window.addEventListener("devicemotion", handleDeviceMotion);
-        setStatus("加速度计已监听，倾斜手机试试...");
-        setTimeout(function () { if (!orientationActive) setStatus("未收到加速度计数据 (HTTP可能受限)", true); }, 3000);
-      }
-    }
-
-    function requestOrientationPermission() {
-      if (orientationActive) return;
-      var hasOrientationAPI = false;
-      try { hasOrientationAPI = typeof DeviceOrientationEvent !== "undefined"; } catch (e) {}
-      if (!hasOrientationAPI) { try { hasOrientationAPI = "DeviceOrientationEvent" in window; } catch (e) {} }
-
-      if (hasOrientationAPI && typeof DeviceOrientationEvent.requestPermission === "function") {
-        setStatus("正在请求陀螺仪权限...");
-        DeviceOrientationEvent.requestPermission()
-          .then(function (state) {
-            setStatus("陀螺仪权限: " + state + (state === "granted" ? " ✓" : ""));
-            if (state === "granted") { window.addEventListener("deviceorientation", handleDeviceOrientation); }
-            else tryDeviceMotion();
-          })
-          .catch(function () { setStatus("陀螺仪权限被拒，尝试加速度计..."); tryDeviceMotion(); });
-      } else if (hasOrientationAPI) {
-        window.addEventListener("deviceorientation", handleDeviceOrientation);
-        setStatus("陀螺仪已监听，倾斜手机...");
-        setTimeout(function () { if (!orientationActive) { setStatus("陀螺仪无数据，尝试加速度计...", true); tryDeviceMotion(); } }, 2000);
-      } else {
-        setStatus("陀螺仪不可用，尝试加速度计...");
-        tryDeviceMotion();
-      }
-    }
-
-    function applyOrientationCorrection(dx, dy) {
-      if (!orientationActive || Math.abs(orientationBeta) > 70) return { dx: dx, dy: dy };
-      var rad = -orientationGamma * Math.PI / 180;
-      var cos = Math.cos(rad), sin = Math.sin(rad);
-      return {
-        dx: dx * cos - dy * sin,
-        dy: dx * sin + dy * cos
-      };
-    }
-
-    async function syncMouseMove(dx, dy) { try { await sendRealtime({ type: "mouseMove", dx, dy }, () => postJson("/api/mouse/move", { dx, dy })); } catch (e) { setStatus(e.message || "鼠标移动失败", true); } }
-    async function syncMouseScroll(dx, dy) { try { await sendRealtime({ type: "mouseScroll", dx, dy }, () => postJson("/api/mouse/scroll", { dx, dy })); } catch (e) { setStatus(e.message || "鼠标滚轮失败", true); } }
-    async function syncMouseClick(button) { try { await sendRealtime({ type: "mouseClick", button }, () => postJson("/api/mouse/click", { button })); } catch (e) { setStatus(e.message || "鼠标点击失败", true); } }
-    async function syncMouseButton(button, action) { try { await sendRealtime({ type: "mouseButton", button, action }, () => postJson("/api/mouse/button", { button, action })); } catch (e) { setStatus(e.message || "鼠标按键失败", true); } }
-
-    function setDragLocked(locked) { if (dragLocked === locked) return; dragLocked = locked; trackpad.classList.toggle("dragLocked", dragLocked); syncMouseButton("left", locked ? "down" : "up"); setStatus(locked ? "拖拽中，松开结束。" : "拖拽结束。"); }
-
-    async function sendText(options = {}) {
-      const payloadText = getComposerText();
-      if (!payloadText.trim()) return;
-      if (sending) { pendingEnterAfterSend = true; return; }
-      stopCountdown(); sending = true; sendButton.setAttribute("aria-busy", "true"); setStatus(options.source === "auto" ? "自动发送中..." : "发送中...");
-      let sendSucceeded = false;
-      try {
-        const messageType = settings.inputMethod === "paste" ? "paste" : "type";
-        const r = (realtimeSocket && realtimeSocket.readyState === WebSocket.OPEN)
-          ? await sendRealtimeRequest({ type: messageType, text: payloadText })
-          : await postJson("/api/" + messageType, { text: payloadText });
-        sendSucceeded = true;
-        addHistoryItem({ kind: "text", text: payloadText });
-        const sentChars = (typeof r.sentChars === "number" && r.sentChars > 0) ? r.sentChars : payloadText.length;
-        const serverTotal = (typeof r.totalChars === "number") ? r.totalChars : 0;
-        const next = Math.max(loadLocalTotalChars() + sentChars, serverTotal);
-        setTotalChars(next);
-        saveStatsToServer(next);
-        text.value = BACKSPACE_SENTINEL;
-        setStatus("已发送，耗时 " + (r.durationMs || 0) + " ms。");
-      }
-      catch (e) { setStatus(e.message || "发送失败", true); }
-      finally {
-        const shouldSendEnter = sendSucceeded && pendingEnterAfterSend;
-        pendingEnterAfterSend = false;
-        sending = false;
-        sendButton.removeAttribute("aria-busy");
-        focusComposer();
-        if (shouldSendEnter) syncKey("enter");
-      }
-    }
-
-    async function syncKey(key) { if (syncingKey) return; stopCountdown(); syncingKey = true; try { await sendRealtime({ type: "key", key }, () => postJson("/api/key", { key })); } catch (e) { setStatus(e.message || "按键同步失败", true); } finally { syncingKey = false; } }
-
-    function syncBackspace() { syncKey("backspace"); }
-    function syncEnter(event) { event.preventDefault(); syncKey("enter"); }
-
-    function sendOrEnter() {
-      if (sending) { pendingEnterAfterSend = true; setStatus("发送完成后回车..."); return; }
-      getComposerText().trim() ? sendText({ source: "manual" }) : syncKey("enter");
-    }
-
-    function sendOnEnter(event) { if (enterNewlineMode) return; if (!getComposerText().trim() || sending) return; event.preventDefault(); sendText({ source: "enter" }); }
-
-    text.addEventListener("beforeinput", (event) => { composerTextBeforeInput = getComposerText(); if (event.inputType === "insertLineBreak") { if (enterNewlineMode) return; getComposerText().trim() ? sendOnEnter(event) : syncEnter(event); } });
-    text.addEventListener("keydown", (event) => { if (event.key === "Backspace" && !canUseBeforeInput && getComposerText() === "") syncBackspace(); if (event.key === "Enter" && !canUseBeforeInput) { if (enterNewlineMode) return; getComposerText().trim() ? sendOnEnter(event) : syncEnter(event); } });
-    text.addEventListener("input", (event) => { restoreBackspaceSentinelAfterDelete(event); startCountdown(); });
-    delaySeconds.addEventListener("input", () => { saveDelayDraft(); startCountdown(); });
-    delaySeconds.addEventListener("blur", () => { commitDelay(); startCountdown(); });
-    autoSend.addEventListener("change", () => { saveAutoSend(); renderAutoSendCopy(); if (autoSend.checked) startCountdown(); else { stopCountdown(); setStatus("自动发送已关闭。"); } });
-    sendButton.addEventListener("pointerdown", keepComposerFocus);
-    sendButton.addEventListener("click", sendOrEnter);
-    keyEscapeButton.addEventListener("click", () => syncKey("escape"));
-    modeToggle.addEventListener("click", () => setMode(currentMode === "text" ? "mouse" : "text"));
-    mouseLeftButton.addEventListener("click", () => syncMouseClick("left"));
-    mouseRightButton.addEventListener("click", () => syncMouseClick("right"));
-    mouseKeyUpButton.addEventListener("click", () => syncKey("up"));
-    mouseKeyDownButton.addEventListener("click", () => syncKey("down"));
-
-    function resetTrackpadTap() { tapStartedAt = 0; tapPointerCount = 0; tapMoved = false; tapStartedDrag = false; doubleTapPending = false; doubleTapIntervalMs = null; }
-    function cancelPendingSingleTapClick() { if (pendingSingleTapTimer === null) return; window.clearTimeout(pendingSingleTapTimer); pendingSingleTapTimer = null; }
-    function resetClickChain() { cancelPendingSingleTapClick(); lastClickDownAt = 0; }
-    function flushPendingSingleTapClick() { if (pendingSingleTapTimer === null) return; cancelPendingSingleTapClick(); lastClickDownAt = 0; syncMouseClick("left"); }
-    function scheduleSingleTapClick(s) { cancelPendingSingleTapClick(); lastClickDownAt = s; pendingSingleTapTimer = window.setTimeout(() => { pendingSingleTapTimer = null; lastClickDownAt = 0; syncMouseClick("left"); }, DOUBLE_TAP_MAX_MS); }
-    function updateTapDebug(v, d) { tapDebug.textContent = "双击间隔：" + (v === null ? "--" : Math.round(v)) + " ms" + (d ? "，" + d : ""); }
-    function startDragFromDoubleTap(v) { resetClickChain(); tapStartedDrag = true; updateTapDebug(v, "已触发拖拽"); setDragLocked(true); }
-
-    function finishTrackpadTap(cancelled) {
-      const elapsed = performance.now() - tapStartedAt;
-      const ok = !cancelled && tapStartedAt && !tapMoved && elapsed <= TAP_MAX_MS;
-      const c = tapPointerCount, started = tapStartedAt, wasDrag = tapStartedDrag;
-      resetTrackpadTap(); if (wasDrag) return;
-      if (!ok) { resetClickChain(); return; }
-      if (c >= 2) { resetClickChain(); syncMouseClick("right"); return; }
-      scheduleSingleTapClick(started);
-    }
-
-    trackpad.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      if (activeTrackpadPointers.size === 0) {
-        const startedAt = performance.now();
-        tapStartedAt = startedAt; tapPointerCount = 0; tapMoved = false; tapStartedDrag = false; doubleTapPending = false; doubleTapIntervalMs = null;
-        const tapIntervalMs = lastClickDownAt > 0 ? startedAt - lastClickDownAt : null;
-        if (!dragLocked && tapIntervalMs !== null && tapIntervalMs < DOUBLE_TAP_MAX_MS) {
-          cancelPendingSingleTapClick(); lastClickDownAt = 0; doubleTapPending = true; doubleTapIntervalMs = tapIntervalMs; updateTapDebug(tapIntervalMs, "等待...");
-        } else { if (tapIntervalMs !== null) flushPendingSingleTapClick(); updateTapDebug(tapIntervalMs, tapIntervalMs === null ? "" : "未触发"); }
-      }
-      activeTrackpadPointers.set(event.pointerId, { startX: event.clientX, startY: event.clientY, lastX: event.clientX, lastY: event.clientY, lastAt: event.timeStamp });
-      tapPointerCount = Math.max(tapPointerCount, activeTrackpadPointers.size);
-      trackpad.setPointerCapture(event.pointerId);
+    clearHistoryButton.addEventListener("click", () => {
+      saveHistory([]);
+      renderHistory();
     });
-    trackpad.addEventListener("pointermove", (event) => {
-      const p = activeTrackpadPointers.get(event.pointerId); if (!p) return; event.preventDefault();
-      if (Math.hypot(event.clientX - p.startX, event.clientY - p.startY) > TAP_MAX_MOVE) { tapMoved = true; if (doubleTapPending) { doubleTapPending = false; tapStartedDrag = true; updateTapDebug(doubleTapIntervalMs, "已触发拖拽"); setDragLocked(true); } if (!dragLocked) { resetClickChain(); updateTapDebug(null, "已重置"); } }
-      const rawDx = event.clientX - p.lastX, rawDy = event.clientY - p.lastY;
-      const corrected = applyOrientationCorrection(rawDx, rawDy);
-      const a = scaleTrackpadDelta(corrected.dx, corrected.dy);
-      p.lastX = event.clientX; p.lastY = event.clientY; p.lastAt = event.timeStamp;
-      if (activeTrackpadPointers.size >= 2) { const ax = getTwoFingerScrollAxis(); queueMouseScroll(ax === "horizontal" ? -corrected.dx * TRACKPAD_SCROLL_SCALE : 0, ax === "vertical" ? corrected.dy * TRACKPAD_SCROLL_SCALE : 0); }
-      else if (activeTrackpadPointers.size === 1 && tapPointerCount === 1) queueMouseMove(a.dx, a.dy);
-    });
-    trackpad.addEventListener("pointerup", (event) => {
-      activeTrackpadPointers.delete(event.pointerId);
-      if (activeTrackpadPointers.size === 0) {
-        if (dragLocked) { setDragLocked(false); resetTrackpadTap(); return; }
-        if (doubleTapPending) { doubleTapPending = false; resetClickChain(); const c = tapPointerCount; resetTrackpadTap(); if (c >= 2) { updateTapDebug(doubleTapIntervalMs, "双指双击→右键"); syncMouseClick("right"); } else { updateTapDebug(doubleTapIntervalMs, "双击"); syncMouseClick("left"); setTimeout(() => syncMouseClick("left"), 50); } return; }
-        finishTrackpadTap();
-      }
-    });
-    trackpad.addEventListener("pointercancel", (event) => {
-      activeTrackpadPointers.delete(event.pointerId);
-      if (activeTrackpadPointers.size === 0) { if (dragLocked) { setDragLocked(false); resetTrackpadTap(); return; } if (doubleTapPending) { doubleTapPending = false; resetClickChain(); resetTrackpadTap(); updateTapDebug(null, "已取消"); return; } finishTrackpadTap(true); }
-    });
-    clearHistory.addEventListener("click", () => { saveHistory([]); renderHistory(); setStatus("历史已清空。"); });
 
-    loadSavedAutoSend(); loadSavedDelay(); renderAutoSendCopy(); stopCountdown(); loadSavedEnterBehavior(); loadSavedSettings(); loadSavedServers();
-    loadTotalChars(); renderHistory(); connectRealtime();
-    ensureBackspaceSentinel(); primeMobileKeyboard();
-    window.addEventListener("pageshow", primeMobileKeyboard);
-    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { connectRealtime(); primeMobileKeyboard(); } });
-    document.addEventListener("pointerdown", focusComposerOnFirstTouch);
-    document.addEventListener("touchstart", focusComposerOnFirstTouch);
+    renderHistory();
+    loadServerTotalChars();
+    connectRealtime();
+    text.focus();
   </script>
 </body>
 </html>
