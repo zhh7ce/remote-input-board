@@ -42,8 +42,6 @@
     }
     h1 { font-size: 17px; margin: 0; }
     .headerRight { display: flex; align-items: center; gap: 10px; }
-    .totalChars { color: var(--muted); font-size: 13px; font-weight: 700; white-space: nowrap; }
-    .totalChars strong { color: var(--accent); font-size: 16px; }
     .lockButton {
       min-height: 0;
       padding: 6px 14px;
@@ -82,6 +80,8 @@
       user-select: none;
     }
     .options input { width: 20px; height: 20px; accent-color: var(--accent); }
+    .optionList { display: grid; gap: 8px; padding: 12px 16px; }
+    .optionList .options { margin-top: 0; }
     .actions { display: flex; gap: 10px; margin-top: 10px; }
     button {
       min-height: 56px;
@@ -100,17 +100,40 @@
     button:disabled, button[aria-busy="true"] { opacity: 0.62; cursor: wait; }
     .statusbar {
       padding: 12px 14px;
-      color: var(--muted);
       font-size: 14px;
+      font-weight: 700;
       min-height: 48px;
       display: flex;
       align-items: center;
       gap: 8px;
     }
-    .statusbar.error { color: var(--danger); }
+    .statusbar.connecting { color: var(--muted); }
+    .statusbar.online { color: var(--accent); }
+    .statusbar.offline { color: var(--danger); }
     .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
     .dot.online { background: var(--accent); }
     .dot.offline { background: var(--danger); }
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: calc(22px + env(safe-area-inset-bottom));
+      transform: translateX(-50%) translateY(12px);
+      max-width: min(90vw, 480px);
+      padding: 11px 20px;
+      border-radius: 999px;
+      color: #fff;
+      background: rgba(22, 33, 29, 0.92);
+      font-size: 14px;
+      font-weight: 700;
+      box-shadow: var(--shadow);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      z-index: 60;
+      text-align: center;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.error { background: rgba(183, 53, 53, 0.95); }
     .historyHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
     .historyHeader h2 { margin: 0; font-size: 16px; }
     .historyHeader button {
@@ -216,25 +239,33 @@
       <div class="composerHeader">
         <h1>远程输入板</h1>
         <div class="headerRight">
-          <span class="totalChars">累计 <strong id="totalChars">0</strong> 字</span>
           <button class="lockButton" id="lockButton" type="button" title="取消信任本机，下次需要重新输入 PIN">锁定</button>
         </div>
       </div>
-      <textarea id="text" placeholder="在这里输入文字，点「发送」就会输入到电脑当前光标处……"></textarea>
-      <label class="options">
-        <input type="checkbox" id="sendOnEnter">
-        回车直接发送（Shift+回车换行）
-      </label>
+      <textarea id="text" placeholder="输入文字…"></textarea>
       <div class="actions">
         <button class="sendButton" id="sendButton" type="button">发送</button>
         <button class="secondary" id="clearButton" type="button">清空</button>
       </div>
     </section>
 
-    <section class="card statusbar" id="statusbar">
+    <section class="card statusbar connecting" id="statusbar">
       <span class="dot" id="statusDot"></span>
-      <span id="statusText">正在连接……</span>
+      <span id="statusText">正在连接…</span>
     </section>
+
+    <section class="card optionList">
+      <label class="options">
+        <input type="checkbox" id="sendOnEnter">
+        回车直接发送（Shift+回车换行）
+      </label>
+      <label class="options">
+        <input type="checkbox" id="enterWhenEmpty">
+        无文字时点发送 = 在电脑上按回车
+      </label>
+    </section>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
     <section class="card">
       <div class="historyHeader">
@@ -263,10 +294,11 @@
     const statusbar = document.getElementById("statusbar");
     const statusDot = document.getElementById("statusDot");
     const statusText = document.getElementById("statusText");
-    const totalCharsNode = document.getElementById("totalChars");
+    const toastNode = document.getElementById("toast");
     const historyList = document.getElementById("historyList");
     const clearHistoryButton = document.getElementById("clearHistory");
     const sendOnEnterCheckbox = document.getElementById("sendOnEnter");
+    const enterWhenEmptyCheckbox = document.getElementById("enterWhenEmpty");
     const lockButton = document.getElementById("lockButton");
 
     const lockOverlay = document.getElementById("lockOverlay");
@@ -277,7 +309,7 @@
 
     const HISTORY_STORAGE_KEY = "remoteInput.history";
     const ENTER_MODE_STORAGE_KEY = "remoteInput.sendOnEnter";
-    const TOTAL_CHARS_STORAGE_KEY = "remoteInput.totalChars";
+    const EMPTY_ENTER_STORAGE_KEY = "remoteInput.enterWhenEmpty";
     const TOKEN_STORAGE_KEY = "remoteInput.token";
     const HISTORY_LIMIT = 20;
 
@@ -291,10 +323,26 @@
     let pinBuffer = "";
     let pinBusy = false;
 
-    function setStatus(message, state) {
-      statusText.textContent = message;
-      statusbar.classList.toggle("error", state === "error");
+    /* 状态条只显示固定的连接状态，不夹杂发送结果等临时信息 */
+    const CONNECTION_LABELS = {
+      connecting: "正在连接…",
+      online: "已连接（实时通道）",
+      offline: "未连接（HTTP 发送）",
+    };
+    function setConnectionState(state) {
+      statusbar.classList.remove("connecting", "online", "offline");
+      statusbar.classList.add(state);
       statusDot.className = "dot " + (state === "online" ? "online" : state === "offline" ? "offline" : "");
+      statusText.textContent = CONNECTION_LABELS[state] || CONNECTION_LABELS.connecting;
+    }
+
+    let toastTimer = null;
+    function showToast(message, isError) {
+      toastNode.textContent = message;
+      toastNode.classList.toggle("error", !!isError);
+      toastNode.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toastNode.classList.remove("show"), 1800);
     }
 
     function genId() { return ++requestSeq; }
@@ -405,7 +453,7 @@
       clearInterval(pingTimer);
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
-      setStatus("已取消信任本机，请重新输入 PIN。", "offline");
+      setConnectionState("offline");
       showLock();
     }
 
@@ -414,9 +462,8 @@
     function unlock() {
       lockOverlay.classList.add("hidden");
       setLockError("");
-      setStatus("已验证，正在连接实时通道……");
+      setConnectionState("connecting");
       connectRealtime();
-      loadServerTotalChars();
       text.focus();
     }
 
@@ -453,7 +500,7 @@
 
         if (payload.type === "auth") {
           if (payload.ok) {
-            setStatus("已连接（实时通道），发送前请先在电脑上点好输入位置。", "online");
+            setConnectionState("online");
             schedulePing();
           } else {
             localStorage.removeItem(TOKEN_STORAGE_KEY);
@@ -474,14 +521,13 @@
           }
           payload.ok ? resolve(payload) : reject(new Error(payload.error || "发送失败"));
         }
-        if (typeof payload.totalChars === "number") updateTotalChars(payload.totalChars);
       });
 
       socket.addEventListener("close", () => {
         clearInterval(pingTimer);
         failAllPending(new Error("实时通道已断开"));
         if (localStorage.getItem(TOKEN_STORAGE_KEY)) {
-          setStatus("实时通道未连接，将改用 HTTP 发送。", "offline");
+          setConnectionState("offline");
           scheduleReconnect();
         }
       });
@@ -508,22 +554,29 @@
       pendingRequests.clear();
     }
 
-    function sendRealtime(payloadText) {
+    function sendRealtime(message) {
       return new Promise((resolve, reject) => {
         const id = genId();
         pendingRequests.set(id, { resolve, reject });
-        socket.send(JSON.stringify({ type: "type", id, text: payloadText }));
+        socket.send(JSON.stringify(Object.assign({ id }, message)));
       });
     }
 
-    async function sendViaHttp(payloadText) {
+    async function sendViaHttp(payload) {
+      const httpPayload = Object.assign({}, payload);
+      delete httpPayload.type;  // "type" is a WebSocket-only envelope field
       const response = await authFetch("/api/type", {
         method: "POST",
-        body: JSON.stringify({ text: payloadText }),
+        body: JSON.stringify(httpPayload),
       });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || !payload.ok) throw new Error(payload.error || "发送失败");
-      return payload;
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.error || "发送失败");
+      return data;
+    }
+
+    async function dispatch(payload) {
+      const online = socket && socket.readyState === WebSocket.OPEN;
+      return online ? sendRealtime(payload) : sendViaHttp(payload);
     }
 
     /* ---------- 发送 ---------- */
@@ -531,29 +584,36 @@
       if (sending) return;
       if (!localStorage.getItem(TOKEN_STORAGE_KEY)) { showLock(); return; }
       const payloadText = text.value;
+
+      // 没有文字：按复选框决定是触发电脑回车，还是直接忽略。
       if (!payloadText.trim()) {
-        setStatus("请输入要发送的文字。", "error");
-        text.focus();
+        if (!enterWhenEmptyCheckbox.checked) { text.focus(); return; }
+        sending = true;
+        sendButton.setAttribute("aria-busy", "true");
+        try {
+          await dispatch({ type: "key", key: "Return" });
+          text.value = "";
+          showToast("已发送回车");
+          text.focus();
+        } catch (error) {
+          showToast("发送失败：" + error.message, true);
+        } finally {
+          sending = false;
+          sendButton.removeAttribute("aria-busy");
+        }
         return;
       }
+
       sending = true;
       sendButton.setAttribute("aria-busy", "true");
       sendButton.textContent = "发送中……";
-      const online = socket && socket.readyState === WebSocket.OPEN;
-      if (!online) setStatus("正在通过 HTTP 发送……", "offline");
       try {
-        const result = online ? await sendRealtime(payloadText) : await sendViaHttp(payloadText);
+        await dispatch({ type: "type", text: payloadText });
         addHistoryItem(payloadText);
-        if (typeof result.totalChars === "number") {
-          updateTotalChars(result.totalChars);
-        } else {
-          updateTotalChars(loadLocalTotalChars() + [...payloadText].length);
-        }
         text.value = "";
-        setStatus("已发送 " + [...payloadText].length + " 字，继续输入下一条吧。", "online");
         text.focus();
       } catch (error) {
-        setStatus("发送失败：" + error.message, "error");
+        showToast("发送失败：" + error.message, true);
       } finally {
         sending = false;
         sendButton.removeAttribute("aria-busy");
@@ -570,32 +630,18 @@
       text.focus();
     });
 
+    enterWhenEmptyCheckbox.checked = localStorage.getItem(EMPTY_ENTER_STORAGE_KEY) === "true";
+    enterWhenEmptyCheckbox.addEventListener("change", () => {
+      localStorage.setItem(EMPTY_ENTER_STORAGE_KEY, enterWhenEmptyCheckbox.checked ? "true" : "false");
+      text.focus();
+    });
+
     text.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && sendOnEnterCheckbox.checked && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
         sendText();
       }
     });
-
-    /* ---------- 累计字数 ---------- */
-    function loadLocalTotalChars() {
-      const value = Number.parseInt(localStorage.getItem(TOTAL_CHARS_STORAGE_KEY) || "0", 10);
-      return Number.isFinite(value) && value > 0 ? value : 0;
-    }
-    function updateTotalChars(count) {
-      const merged = Math.max(loadLocalTotalChars(), count);
-      localStorage.setItem(TOTAL_CHARS_STORAGE_KEY, String(merged));
-      totalCharsNode.textContent = merged.toLocaleString("zh-CN");
-    }
-    updateTotalChars(loadLocalTotalChars());
-
-    async function loadServerTotalChars() {
-      try {
-        const response = await authFetch("/api/stats");
-        const payload = await response.json();
-        if (payload.ok && typeof payload.totalChars === "number") updateTotalChars(payload.totalChars);
-      } catch {}
-    }
 
     /* ---------- 本地发送记录 ---------- */
     function loadHistory() {
@@ -647,11 +693,11 @@
       } catch {}
       if (localStorage.getItem(TOKEN_STORAGE_KEY)) {
         lockOverlay.classList.add("hidden");
+        setConnectionState("connecting");
         connectRealtime();
-        loadServerTotalChars();
       } else {
         showLock();
-        setStatus("未解锁：请先输入 PIN。", "offline");
+        setConnectionState("offline");
       }
       text.focus();
     }

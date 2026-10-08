@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from py_remote_input.auth import TRUSTED_DEVICES_FILE_NAME, AuthStore, load_pin
 from py_remote_input.logger import Logger
 from py_remote_input.stats import TextStatsStore, count_text_history_chars
-from py_remote_input.typer import type_text
+from py_remote_input.typer import press_key, type_text
 from py_remote_input.web import handle_realtime_message, handle_request
 from py_remote_input.websocket import build_websocket_accept, encode_websocket_frame, read_websocket_frame
 
@@ -74,6 +74,7 @@ def serve_websocket_messages(
     logger: Logger,
     *,
     type_text,
+    press_key=None,
     auth: AuthStore,
     client_ip: str,
     record_history=None,
@@ -131,19 +132,20 @@ def serve_websocket_messages(
                 payload,
                 logger,
                 type_text=type_text,
+                press_key=press_key,
                 record_history=record_history,
                 text_stats=text_stats,
             )
             if isinstance(request_id, (str, int)):
                 result["id"] = request_id
-            if not result.get("ok") or result.get("type") in {"pong", "stats", "type"}:
+            if not result.get("ok") or result.get("type") in {"pong", "stats", "type", "key"}:
                 _send_ws_json(writer, result)
         except OSError as exc:
             logger.warn("WebSocket connection closed.", {"error": str(exc)})
             return
 
 
-def build_handler(logger: Logger, record_history, text_stats, type_text, auth: AuthStore):
+def build_handler(logger: Logger, record_history, text_stats, type_text, auth: AuthStore, press_key=None):
     class RequestHandler(BaseHTTPRequestHandler):
         # HTTP/1.1 is required: browsers reject a WebSocket upgrade response
         # that is not "HTTP/1.1 101 Switching Protocols".
@@ -197,6 +199,7 @@ def build_handler(logger: Logger, record_history, text_stats, type_text, auth: A
                 self.wfile,
                 logger,
                 type_text=type_text,
+                press_key=press_key,
                 auth=auth,
                 client_ip=client_ip,
                 record_history=record_history,
@@ -214,6 +217,7 @@ def build_handler(logger: Logger, record_history, text_stats, type_text, auth: A
                 body,
                 type_text,
                 logger,
+                press_key=press_key,
                 record_history=record_history,
                 text_stats=text_stats,
                 auth=auth,
@@ -324,7 +328,7 @@ def serve() -> None:
         logger.info(f"Loaded PIN from {'PIN_CODE' if os.environ.get('PIN_CODE', '').strip() else pin_path}.")
 
     record_history, text_stats = build_history_recorder(log_dir, log_dir / "stats.json")
-    handler = build_handler(logger, record_history, text_stats, type_text, auth)
+    handler = build_handler(logger, record_history, text_stats, type_text, auth, press_key=press_key)
 
     # HTTP always listens on PORT (legacy behaviour); HTTPS joins on
     # HTTPS_PORT (default PORT + 1) when cert.pem/key.pem are present.

@@ -100,3 +100,33 @@ def type_text(text: str) -> dict:
         "charCount": len(text),
         "durationMs": int((time.perf_counter() - started_at) * 1000),
     }
+
+
+# Keys the phone is allowed to press remotely (whitelist; arbitrary keysyms
+# from the network must not be passed straight to wtype).
+ALLOWED_KEYSYMS = frozenset({RETURN_KEYSYM})
+
+
+def press_key(keysym: str) -> dict:
+    """Press a single whitelisted keysym (e.g. ``Return``) in the focused window."""
+    if keysym not in ALLOWED_KEYSYMS:
+        raise ValueError(f"Unsupported key: {keysym}")
+    ensure_wtype_available()
+    started_at = time.perf_counter()
+    subprocess.run(
+        [WTYPE_BIN, "-k", keysym],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=CHUNK_TIMEOUT_SECONDS,
+    )
+    return {
+        "method": "wtype",
+        "key": keysym,
+        "durationMs": int((time.perf_counter() - started_at) * 1000),
+    }
+
+
+def press_return() -> dict:
+    """Press Enter/Return in the focused window."""
+    return press_key(RETURN_KEYSYM)

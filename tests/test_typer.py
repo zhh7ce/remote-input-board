@@ -72,6 +72,29 @@ class TypeTextTests(unittest.TestCase):
             with self.assertRaises(typer.WtypeNotFoundError):
                 typer.type_text("hello")
 
+    def test_press_key_invokes_wtype_return(self):
+        with (
+            mock.patch.object(typer, "ensure_wtype_available", return_value="/usr/bin/wtype"),
+            mock.patch.object(typer.subprocess, "run") as run,
+        ):
+            result = typer.press_key("Return")
+
+        self.assertEqual(run.call_args.args[0], ["wtype", "-k", "Return"])
+        self.assertEqual(result["key"], "Return")
+
+    def test_press_key_rejects_non_whitelisted_keysym(self):
+        with self.assertRaises(ValueError):
+            typer.press_key("Escape")
+
+    def test_press_return_helper(self):
+        with (
+            mock.patch.object(typer, "ensure_wtype_available", return_value="/usr/bin/wtype"),
+            mock.patch.object(typer.subprocess, "run") as run,
+        ):
+            typer.press_return()
+
+        self.assertEqual(run.call_args.args[0], ["wtype", "-k", "Return"])
+
 
 if __name__ == "__main__":
     unittest.main()

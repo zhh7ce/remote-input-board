@@ -2,7 +2,7 @@
 
 **用手机浏览器给 Linux 电脑远程输入文字。** 电脑上跑一个小服务，手机打开网页输入文字，点发送就通过 [wtype](https://github.com/atx/wtype) 输入到电脑当前光标处。
 
-当前为 Linux/Wayland 精简版，只保留**文字发送**能力（实时 WebSocket，断连自动回退 HTTP）；按键控制、鼠标触控板、快捷指令等 Windows 版功能暂未移植。
+当前为 Linux/Wayland 精简版，只保留**文字发送**能力（实时 WebSocket，断连自动回退 HTTP）；另有一个可开关的小功能：输入框为空时点发送可在电脑上触发回车。鼠标触控板、快捷指令等 Windows 版功能暂未移植。
 
 每台手机**配对一次**：首次连接输入 **PIN 码**（手机锁屏样式的数字键盘点按，不弹系统键盘），服务端长期记住该设备，之后手机 IP 变化或服务重启都免输；可选 HTTPS 加密传输。
 
@@ -42,6 +42,8 @@ PIN required on first connect: 482915
 ```
 
 电脑和手机连同一个 WiFi，手机浏览器打开页面，先在锁屏界面点按数字键输入终端里的 PIN，解锁后才能发送文字。发送前记得在电脑上点一下目标窗口，把光标放好。
+
+页面底部有两个可选项：「回车直接发送（Shift+回车换行）」和「无文字时点发送 = 在电脑上按回车」——后者勾选后，输入框留空点发送就会在电脑上触发一次 Enter（比如用来发送 IM 消息、确认对话框），选择会记住在本手机上。顶部状态条固定显示连接状态：**已连接（实时通道）** 走 WebSocket，**未连接（HTTP 发送）** 时自动回退 HTTP，发送结果以短暂浮层提示，不再显示字数统计。
 
 ### PIN 码与设备配对
 
@@ -117,15 +119,16 @@ SSL_CERT_FILE=/path/cert.pem SSL_KEY_FILE=/path/key.pem \
 | `pin.txt` | 自动生成的 PIN（600 权限；也可用 `PIN_CODE` 覆盖而不生成文件） |
 | `trusted_devices.json` | 已配对设备（只存 token 的 SHA-256，600 权限；删除即全部重新配对） |
 | `logs/server.log` | 服务日志 |
-| `logs/history/YYYY-MM-DD/HH.log` | 发送历史，按天+小时分文件，一行一条 JSON |
-| `logs/stats.json` | 累计字数备份（内存缓存约 5 分钟落盘） |
+| `logs/history/YYYY-MM-DD/HH.log` | 发送历史，按天+小时分文件，一行一条 JSON（`kind=text` 为文字、`kind=key` 为按键） |
+| `logs/stats.json` | 累计字数备份（只统计文字，按键不计字；内存缓存约 5 分钟落盘） |
 
 ### 实现说明
 
 - 除页面和 `/api/auth` 外，所有 HTTP 接口都要带 `Authorization: Bearer <token>`；token 由 `POST /api/auth` 用 PIN 换取，持久有效、不绑 IP，`POST /api/logout` 可注销本机
-- 文字经 WebSocket（`/ws`，首包 auth，之后消息 `{"type":"type","text":...}`）或 HTTP（`POST /api/type`）到达服务端
+- 文字经 WebSocket（`/ws`，首包 auth，之后消息 `{"type":"type","text":...}`）或 HTTP（`POST /api/type`，body `{"text":...}`）到达服务端
+- 空发送回车：WS 消息 `{"type":"key","key":"Return"}` 或 HTTP body `{"key":"Return"}`；服务端有按键白名单（当前仅 `Return`），非白名单返回 400。历史中记为 `{"kind":"key","key":"Return"}`，不计入累计字数
 - 页面协议自动跟随：HTTP 页面走 `ws://`，HTTPS 页面走 `wss://`
-- 服务端调用 `wtype <text>`；换行符会转成 `wtype -k Return`，长文本自动分批调用
+- 服务端调用 `wtype <text>`；换行符会转成 `wtype -k Return`，长文本自动分批调用；单键则调用 `wtype -k Return`
 - wtype 未安装时接口返回明确的错误提示，手机页面可见
 
 ### 技术栈

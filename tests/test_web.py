@@ -93,6 +93,57 @@ class HttpEndpointTests(unittest.TestCase):
 
         self.assertEqual(json.loads(response.body.decode("utf-8"))["totalChars"], 99)
 
+    def test_key_request_presses_return(self):
+        pressed = []
+
+        def press_key(key):
+            pressed.append(key)
+            return {"method": "wtype", "key": key}
+
+        response = handle_request(
+            "POST",
+            "/api/type",
+            json.dumps({"key": "Return"}).encode("utf-8"),
+            lambda _text: {},
+            FakeLogger(),
+            press_key=press_key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(pressed, ["Return"])
+        payload = json.loads(response.body.decode("utf-8"))
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["key"], "Return")
+
+    def test_key_request_records_history_without_char_stats(self):
+        records = []
+        response = handle_request(
+            "POST",
+            "/api/type",
+            json.dumps({"key": "Return"}).encode("utf-8"),
+            lambda _text: {},
+            FakeLogger(),
+            press_key=lambda key: {"method": "wtype", "key": key},
+            record_history=lambda item: records.append(item),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(records, [{"kind": "key", "key": "Return"}])
+        self.assertNotIn("totalChars", json.loads(response.body.decode("utf-8")))
+
+    def test_rejects_unsupported_key(self):
+        response = handle_request(
+            "POST",
+            "/api/type",
+            json.dumps({"key": "Super_L"}).encode("utf-8"),
+            lambda _text: {},
+            FakeLogger(),
+            press_key=lambda key: {},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Unsupported key", response.body.decode("utf-8"))
+
     def test_rejects_empty_text(self):
         response = handle_request(
             "POST",
@@ -182,6 +233,31 @@ class RealtimeMessageTests(unittest.TestCase):
 
         self.assertFalse(result["ok"])
         self.assertIn("not configured", result["error"])
+
+    def test_key_message_presses_return_and_records_history(self):
+        pressed = []
+        records = []
+        result = handle_realtime_message(
+            {"type": "key", "key": "Return"},
+            FakeLogger(),
+            press_key=lambda key: pressed.append(key) or {"method": "wtype", "key": key},
+            record_history=lambda item: records.append(item),
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["type"], "key")
+        self.assertEqual(pressed, ["Return"])
+        self.assertEqual(records, [{"kind": "key", "key": "Return"}])
+
+    def test_key_message_rejects_unknown_keysym(self):
+        result = handle_realtime_message(
+            {"type": "key", "key": "Escape"},
+            FakeLogger(),
+            press_key=lambda key: {},
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("Unsupported key", result["error"])
 
     def test_get_stats_returns_total(self):
         result = handle_realtime_message(

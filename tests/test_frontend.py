@@ -27,6 +27,22 @@ class FrontendTests(unittest.TestCase):
         self.assertIn('type: "type"', self.html)
         self.assertIn("sendText", self.html)
 
+    def test_empty_send_can_press_enter_via_checkbox(self):
+        self.assertIn('id="enterWhenEmpty"', self.html)
+        self.assertIn("remoteInput.enterWhenEmpty", self.html)
+        self.assertIn('type: "key", key: "Return"', self.html)
+
+    def test_total_char_counter_is_removed(self):
+        self.assertNotIn("totalChars", self.html)
+        self.assertNotIn("累计", self.html)
+        self.assertNotIn("/api/stats", self.html)
+
+    def test_status_bar_shows_fixed_connection_state(self):
+        self.assertIn("setConnectionState", self.html)
+        self.assertIn("已连接（实时通道）", self.html)
+        self.assertIn("未连接（HTTP 发送）", self.html)
+        self.assertIn("正在连接…", self.html)
+
     def test_keeps_local_history(self):
         self.assertIn("remoteInput.history", self.html)
         self.assertIn('id="historyList"', self.html)

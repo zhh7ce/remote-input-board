@@ -72,17 +72,24 @@ class WebSocketProtocolTests(unittest.TestCase):
 
         self.assertEqual(frame, bytes([0x81, len(payload)]) + payload)
 
-    def _run_loop(self, messages, auth, client_ip="1.2.3.4"):
+    def _run_loop(self, messages, auth, client_ip="1.2.3.4", pressed=None):
         stream = b"".join(
             build_masked_client_frame(0x1, json.dumps(message).encode("utf-8")) for message in messages
         )
         reader = io.BytesIO(stream + build_masked_client_frame(0x8))
         writer = io.BytesIO()
+
+        def press_key(key):
+            if pressed is not None:
+                pressed.append(key)
+            return {"method": "wtype", "key": key}
+
         serve_websocket_messages(
             reader,
             writer,
             FakeLogger(),
             type_text=lambda text: {"method": "wtype", "charCount": len(text)},
+            press_key=press_key,
             auth=auth,
             client_ip=client_ip,
         )
@@ -120,6 +127,25 @@ class WebSocketProtocolTests(unittest.TestCase):
         self.assertEqual(responses[1]["type"], "type")
         self.assertEqual(responses[1]["id"], 2)
         self.assertEqual(responses[1]["sentChars"], 2)
+
+    def test_websocket_message_loop_dispatches_key_message_after_auth(self):
+        auth = AuthStore("482915")
+        token = auth.authenticate("1.2.3.4", "482915")
+        pressed = []
+        responses = self._run_loop(
+            [
+                {"type": "auth", "id": 1, "token": token},
+                {"type": "key", "id": 2, "key": "Return"},
+            ],
+            auth,
+            pressed=pressed,
+        )
+
+        self.assertEqual(pressed, ["Return"])
+        self.assertTrue(responses[1]["ok"])
+        self.assertEqual(responses[1]["type"], "key")
+        self.assertEqual(responses[1]["key"], "Return")
+        self.assertEqual(responses[1]["id"], 2)
 
     def test_websocket_accepts_trusted_token_from_any_ip(self):
         auth = AuthStore("482915")

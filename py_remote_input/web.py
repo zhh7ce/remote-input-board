@@ -50,6 +50,9 @@ def _unauthorized() -> Response:
 PUBLIC_ROUTES = {("GET", "/"), ("GET", "/api/auth-info"), ("POST", "/api/auth")}
 
 
+ALLOWED_REMOTE_KEYS = {"Return"}
+
+
 def _finish_text_message(text: str, result: dict, record_history, text_stats) -> dict:
     if record_history is not None:
         record_history({"kind": "text", "text": text})
@@ -60,11 +63,18 @@ def _finish_text_message(text: str, result: dict, record_history, text_stats) ->
     return response
 
 
+def _finish_key_message(key: str, result: dict, record_history) -> dict:
+    if record_history is not None:
+        record_history({"kind": "key", "key": key})
+    return {"ok": True, "type": "key", **result}
+
+
 def handle_realtime_message(
     payload: dict,
     logger,
     *,
     type_text=None,
+    press_key=None,
     record_history=None,
     text_stats=None,
 ) -> dict:
@@ -95,6 +105,14 @@ def handle_realtime_message(
                 return {"ok": False, "error": "Text input is not configured."}
             return _finish_text_message(text, type_text(text), record_history, text_stats)
 
+        if message_type == "key":
+            key = payload.get("key", "")
+            if not isinstance(key, str) or key not in ALLOWED_REMOTE_KEYS:
+                return {"ok": False, "error": "Unsupported key."}
+            if press_key is None:
+                return {"ok": False, "error": "Key input is not configured."}
+            return _finish_key_message(key, press_key(key), record_history)
+
         if message_type == "ping":
             return {"ok": True, "type": "pong"}
 
@@ -111,6 +129,7 @@ def handle_request(
     type_text,
     logger,
     *,
+    press_key=None,
     record_history=None,
     text_stats=None,
     auth=None,
@@ -161,6 +180,24 @@ def handle_request(
         payload = _read_json_body(body, logger)
         if payload is None:
             return json_response(400, {"error": "Invalid JSON body."})
+
+        # Key press request: {"key": "Return"}.
+        key = payload.get("key")
+        if key is not None:
+            if not isinstance(key, str) or key not in ALLOWED_REMOTE_KEYS:
+                return json_response(400, {"ok": False, "error": "Unsupported key."})
+            logger.info("Received key request.", {"key": key})
+            try:
+                if press_key is None:
+                    return json_response(500, {"ok": False, "error": "Key input is not configured."})
+                result = press_key(key)
+                if record_history is not None:
+                    record_history({"kind": "key", "key": key})
+                logger.info("Key request completed.", result)
+                return json_response(200, {"ok": True, **result})
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Key request failed.", {"error": str(exc)})
+                return json_response(500, {"ok": False, "error": str(exc)})
 
         text = payload.get("text", "")
         if not isinstance(text, str) or not text.strip():
