@@ -1,0 +1,14 @@
+[Unit]
+Description=Remote Input Board (phone browser as Linux text input panel)
+Documentation=https://github.com/zhh7ce/remote-input-board
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/remote-input-board
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,59 @@
+# Maintainer: zhh7ce <zhh7ce@users.noreply.github.com>
+#
+# Rolling (-git) package. Build and install with:
+#   cd packaging/arch && makepkg -si
+#
+# Runtime files follow XDG:
+#   config:  ~/.config/remote-input-board  (pin.txt, trusted_devices.json, cert/key)
+#   data:    ~/.local/share/remote-input-board  (logs, history, stats.json)
+pkgname=remote-input-board-git
+_pkgname=remote-input-board
+pkgver=r0.gdeadbee
+pkgrel=1
+pkgdesc="Use a phone browser as a remote text input panel for Linux (Wayland, via wtype)"
+arch=('any')
+url="https://github.com/zhh7ce/${_pkgname}"
+license=('custom')
+depends=('python' 'wtype')
+optdepends=(
+  'openssl: generate the self-signed HTTPS certificate (remote-input-board-generate-cert)'
+  'systemd: run the server as a user service'
+)
+makedepends=('git' 'python-build' 'python-installer' 'python-wheel' 'python-setuptools')
+provides=("${_pkgname}")
+conflicts=("${_pkgname}")
+source=("git+https://github.com/zhh7ce/${_pkgname}.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "${_pkgname}"
+  printf 'r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+build() {
+  cd "${_pkgname}"
+  python -m build --wheel --no-isolation
+}
+
+check() {
+  cd "${_pkgname}"
+  python -m unittest discover -s tests
+}
+
+package() {
+  cd "${_pkgname}"
+  python -m installer --destdir="${pkgdir}" dist/*.whl
+
+  # Helper CLI tools shipped from scripts/.
+  install -Dm755 scripts/generate_cert.sh \
+    "${pkgdir}/usr/bin/remote-input-board-generate-cert"
+  install -Dm755 scripts/rebuild_stats.py \
+    "${pkgdir}/usr/bin/remote-input-board-rebuild-stats"
+
+  # User service (not enabled by default):
+  #   systemctl --user enable --now remote-input-board.service
+  install -Dm644 packaging/systemd/remote-input-board.service \
+    "${pkgdir}/usr/lib/systemd/user/remote-input-board.service"
+
+  install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+}

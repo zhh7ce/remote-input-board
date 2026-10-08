@@ -13,3 +13,9 @@ logs/
 *.log
 *.zip
 *.spec
+
+# makepkg artifacts (packaging/arch/)
+packaging/arch/pkg/
+packaging/arch/src/
+packaging/arch/*.pkg.tar.*
+packaging/arch/*.tar.gz

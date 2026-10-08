@@ -24,7 +24,29 @@ sudo dnf install wtype
 
 > 服务进程需要能访问你的图形会话（`WAYLAND_DISPLAY`、`XDG_RUNTIME_DIR`）。在桌面会话里启动，或用 systemd --user 服务，通常都能自动继承。
 
-### 快速开始
+### Arch Linux 安装（PKGBUILD）
+
+仓库自带滚动打包脚本，一条命令构建并安装：
+
+```bash
+git clone https://github.com/zhh7ce/remote-input-board.git
+cd remote-input-board/packaging/arch
+makepkg -si
+```
+
+安装后得到（遵循 Linux FHS，配置与数据按 XDG 放在用户目录）：
+
+| 路径 | 内容 |
+|------|------|
+| `/usr/bin/remote-input-board` | 启动服务（等同 `python3 -m py_remote_input`） |
+| `/usr/bin/remote-input-board-generate-cert` | 生成自签 HTTPS 证书到配置目录 |
+| `/usr/bin/remote-input-board-rebuild-stats` | 从历史重建累计字数 |
+| `/usr/lib/python3.x/site-packages/py_remote_input/` | 程序本体（含页面模板） |
+| `/usr/lib/systemd/user/remote-input-board.service` | 用户服务，`systemctl --user enable --now remote-input-board` 启用 |
+
+依赖 `python` 与 `wtype`（由 pacman 自动安装）；`openssl`、`systemd` 为可选依赖。
+
+### 快速开始（源码方式）
 
 纯标准库实现，无需安装依赖，直接跑：
 
@@ -49,10 +71,10 @@ PIN required on first connect: 482915
 
 采用 KDE Connect 式的"配对一次、长期信任"模型，正常使用中**每台手机只需输入一次 PIN**：
 
-- 首次启动会在工作目录自动生成 `pin.txt`（权限 600，已 gitignore），之后一直复用；终端每次启动都会打印当前 PIN
+- 首次启动会在配置目录（`~/.config/remote-input-board/pin.txt`，权限 600）自动生成 PIN，之后一直复用；终端每次启动都会打印当前 PIN
 - 想自己指定：`PIN_CODE=135790 python3 -m py_remote_input`（纯数字）
-- 手机首次输对 PIN 后拿到随机 token 存在浏览器本地；服务端把设备记到 `trusted_devices.json`（只存 token 的 SHA-256，权限 600，已 gitignore）。**之后手机 IP 变化（DHCP、私人无线局域网地址）或服务重启都不再要求 PIN**，直到主动取消配对
-- 取消配对：手机页面右上角「锁定」按钮（只取消本机），或删除工作目录的 `trusted_devices.json`（所有手机重新配对）
+- 手机首次输对 PIN 后拿到随机 token 存在浏览器本地；服务端把设备记到配置目录的 `trusted_devices.json`（只存 token 的 SHA-256，权限 600）。**之后手机 IP 变化（DHCP、私人无线局域网地址）或服务重启都不再要求 PIN**，直到主动取消配对
+- 取消配对：手机页面右上角「锁定」按钮（只取消本机），或删除 `~/.config/remote-input-board/trusted_devices.json`（所有手机重新配对）
 - 安全机制：PIN 常量时间比较；token 为 32 字节随机数，服务端只存哈希；同一 IP 连续输错 5 次 PIN 会被限流（15 秒起指数退避到 5 分钟）。token 与 IP 解绑后持有者即可访问，不可信网络请务必启用 HTTPS
 - WebSocket 也一样：连接后必须先发 `{"type":"auth","token":...}`，之前的任何消息都会被拒绝
 
@@ -63,7 +85,7 @@ PIN required on first connect: 482915
 | 改端口 | `PORT=3219 python3 -m py_remote_input` |
 | 指定 PIN | `PIN_CODE=135790 python3 -m py_remote_input` |
 | 局域网访问 | 确保防火墙放行 TCP 3210（HTTP）和 3211（HTTPS） |
-| 启用 HTTPS | 工作目录放 `cert.pem`+`key.pem`（`scripts/generate_cert.sh` 生成）即在 **3211** 端口额外开启 HTTPS，与 3210 的 HTTP 同时可用；可用 `HTTPS_PORT` 改端口、`SSL_CERT_FILE`/`SSL_KEY_FILE` 改证书路径（见下） |
+| 启用 HTTPS | 配置目录放 `cert.pem`+`key.pem`（`remote-input-board-generate-cert` 或 `scripts/generate_cert.sh` 生成）即在 **3211** 端口额外开启 HTTPS，与 3210 的 HTTP 同时可用；可用 `HTTPS_PORT` 改端口、`SSL_CERT_FILE`/`SSL_KEY_FILE` 改证书路径（见下） |
 
 ### HTTPS（可选）
 
@@ -71,11 +93,14 @@ PIN required on first connect: 482915
 
 **方式一：自签证书（适合局域网 IP 访问，零成本）**
 
-一键脚本会自动探测本机局域网 IP 并把它写进证书 SAN（也可手动传 IP），证书就生成在工作目录下：
+一键脚本会自动探测本机局域网 IP 并把它写进证书 SAN（也可手动传 IP），证书生成在配置目录 `~/.config/remote-input-board/`：
 
 ```bash
+# 已安装（PKGBUILD）：
+remote-input-board-generate-cert
+# 源码方式：
 scripts/generate_cert.sh
-# 或指定：scripts/generate_cert.sh 192.168.10.172
+# 或指定 IP：scripts/generate_cert.sh 192.168.10.172
 ```
 
 生成后**正常启动即可，不用设任何环境变量**——启动后会看到日志同时列出 http:// 和 https:// 地址：
@@ -91,7 +116,7 @@ python3 -m py_remote_input
 HTTPS_PORT=8443 \
 SSL_CERT_FILE=/path/cert.pem SSL_KEY_FILE=/path/key.pem \
   python3 -m py_remote_input
-# 证书路径语义同 shell 的 ${SSL_CERT_FILE:-./cert.pem}，设了才覆盖默认值
+# 证书路径语义同 shell 的 ${SSL_CERT_FILE:-<配置目录>/cert.pem}，设了才覆盖默认值
 ```
 
 然后用 `https://` + **HTTPS 端口** + 证书里那个 IP 访问（如 `https://192.168.10.172:3211`）。注意：
@@ -103,24 +128,27 @@ SSL_CERT_FILE=/path/cert.pem SSL_KEY_FILE=/path/key.pem \
   - **安卓 Firefox** 用的是自带证书库，个别版本不给"继续"入口，建议直接换 Chrome
 - 想彻底消除警告（不是点"继续"而是真信任）：把 `cert.pem` 传到手机安装——安卓在「设置 → 安全 → 加密与凭据 → 安装证书 → CA 证书」；iOS 安装描述文件后还要到「设置 → 通用 → 关于本机 → 证书信任设置」里启用
 - 默认路径/环境变量只找到一个文件（有 cert 没 key，或反过来）时服务会直接报错并指出缺哪个
-- 常见误区：启动日志只有 `HTTP on port 3210.` 没有 `HTTPS on port 3211.`，说明工作目录没有 `cert.pem`/`key.pem`，此时访问 3211 会连接失败——跑一次 `scripts/generate_cert.sh` 再重启即可
+- 常见误区：启动日志只有 `HTTP on port 3210.` 没有 `HTTPS on port 3211.`，说明配置目录没有 `cert.pem`/`key.pem`，此时访问 3211 会连接失败——跑一次 `remote-input-board-generate-cert` 再重启即可
 - 注意协议和端口要配对：3210 只说 HTTP（用 https:// 访问会报错），3211 只说 HTTPS（用 http:// 访问会报错）
 
 **方式二：受信任证书（需要域名）**
 
 如果你有域名指向这台机器，可以用 Caddy 自动签发 Let's Encrypt 证书并反代到 3210，或用 certbot 拿到证书后同样通过 `SSL_CERT_FILE`/`SSL_KEY_FILE` 加载。纯内网 IP 无法申请公网受信任证书。
 
-### 日志与数据
+### 文件位置（XDG 目录）
 
-运行目录下生成（可用工作目录控制位置）：
+从任意目录启动都可以，运行时文件不再写在工作目录（旧版本放在工作目录的文件会在首次启动时**自动迁移一次**）：
 
-| 文件 | 内容 |
-|------|------|
-| `pin.txt` | 自动生成的 PIN（600 权限；也可用 `PIN_CODE` 覆盖而不生成文件） |
-| `trusted_devices.json` | 已配对设备（只存 token 的 SHA-256，600 权限；删除即全部重新配对） |
-| `logs/server.log` | 服务日志 |
-| `logs/history/YYYY-MM-DD/HH.log` | 发送历史，按天+小时分文件，一行一条 JSON（`kind=text` 为文字、`kind=key` 为按键） |
-| `logs/stats.json` | 累计字数备份（只统计文字，按键不计字；内存缓存约 5 分钟落盘） |
+| 文件 | 位置 | 内容 |
+|------|------|------|
+| `pin.txt` | `~/.config/remote-input-board/`（700 目录、600 文件） | 自动生成的 PIN（也可用 `PIN_CODE` 覆盖而不生成文件） |
+| `trusted_devices.json` | 同上 | 已配对设备（只存 token 的 SHA-256，600；删除即全部重新配对） |
+| `cert.pem` / `key.pem` | 同上 | HTTPS 证书（可选） |
+| `logs/server.log` | `~/.local/share/remote-input-board/logs/` | 服务日志 |
+| `logs/history/YYYY-MM-DD/HH.log` | 同上 | 发送历史，按天+小时分文件，一行一条 JSON（`kind=text` 为文字、`kind=key` 为按键） |
+| `logs/stats.json` | 同上 | 累计字数备份（只统计文字，按键不计字；内存缓存约 5 分钟落盘） |
+
+目录遵循 XDG：设置了 `XDG_CONFIG_HOME`/`XDG_DATA_HOME` 时随之变化；也可用 `REMOTE_INPUT_CONFIG_DIR`、`REMOTE_INPUT_DATA_DIR` 单独覆盖。
 
 ### 实现说明
 

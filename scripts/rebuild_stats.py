@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
@@ -6,22 +7,26 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from py_remote_input.paths import data_dir
 from py_remote_input.stats import count_text_history_chars
 
 
 def parse_args() -> argparse.Namespace:
+    default_logs = data_dir() / "logs"
     parser = argparse.ArgumentParser(description="Rebuild total character stats from input history.")
     parser.add_argument(
         "--history",
         type=Path,
-        default=Path("logs") / "history",
-        help="Directory containing history JSONL files.",
+        default=default_logs / "history",
+        help="Directory containing history JSONL files "
+        f"(default: {default_logs / 'history'}).",
     )
     parser.add_argument(
         "--stats",
         type=Path,
-        default=Path("logs") / "stats.json",
-        help="Stats JSON file to write.",
+        default=default_logs / "stats.json",
+        help="Stats JSON file to write "
+        f"(default: {default_logs / 'stats.json'}).",
     )
     return parser.parse_args()
 

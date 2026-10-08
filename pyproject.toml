@@ -5,6 +5,9 @@ description = "Use a phone browser as a remote text input panel for Linux (Wayla
 requires-python = ">=3.11"
 dependencies = []
 
+[project.scripts]
+remote-input-board = "py_remote_input.__main__:main"
+
 [build-system]
 requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"

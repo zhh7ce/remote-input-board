@@ -10,6 +10,7 @@ import ssl
 import threading
 from urllib.parse import urlparse
 
+from py_remote_input import paths
 from py_remote_input.auth import TRUSTED_DEVICES_FILE_NAME, AuthStore, load_pin
 from py_remote_input.logger import Logger
 from py_remote_input.stats import TextStatsStore, count_text_history_chars
@@ -241,9 +242,10 @@ DEFAULT_KEY_FILE = "key.pem"
 def resolve_tls_files(base_dir: Path) -> tuple[str, str]:
     """Pick TLS cert/key paths.
 
-    Same idiom as shell ``: "${SSL_CERT_FILE:=./cert.pem}"``: the working
-    directory's cert.pem/key.pem are the defaults, and an environment variable
-    overrides the corresponding path when set.
+    Same idiom as shell ``: "${SSL_CERT_FILE:=<config>/cert.pem}"``:
+    base_dir's cert.pem/key.pem (the XDG config directory by default) are the
+    defaults, and an environment variable overrides the corresponding path
+    when set.
     """
     cert_file = os.environ.get("SSL_CERT_FILE") or str(base_dir / DEFAULT_CERT_FILE)
     key_file = os.environ.get("SSL_KEY_FILE") or str(base_dir / DEFAULT_KEY_FILE)
@@ -273,7 +275,8 @@ def tls_status(base_dir: Path) -> tuple[str, str, bool]:
     raise RuntimeError(
         "To enable HTTPS both files must exist; missing: "
         + " and ".join(missing)
-        + ". Generate them with scripts/generate_cert.sh, or set/clear "
+        + ". Generate them with remote-input-board-generate-cert "
+        "(scripts/generate_cert.sh in the source tree), or set/clear "
         "SSL_CERT_FILE and SSL_KEY_FILE."
     )
 
@@ -313,9 +316,16 @@ def create_servers(
 
 def serve() -> None:
     port = int(os.environ.get("PORT", "3210"))
-    base_dir = Path.cwd()
-    log_dir = base_dir / "logs"
+    base_dir, data_dir = paths.ensure_app_dirs()
+    # Migrate before anything (e.g. the logger) writes into data/logs,
+    # otherwise the legacy logs/ directory can no longer move over wholesale.
+    moved = paths.migrate_legacy_files(base_dir, data_dir)
+    log_dir = data_dir / "logs"
     logger = Logger(log_dir / "server.log")
+    logger.info(f"Config directory: {base_dir}")
+    logger.info(f"Data directory:   {data_dir}")
+    for name in moved:
+        logger.info(f"Migrated legacy file from the working directory into the XDG layout: {name}")
 
     pin, pin_path, pin_generated = load_pin(base_dir)
     trusted_path = base_dir / TRUSTED_DEVICES_FILE_NAME
@@ -351,7 +361,7 @@ def serve() -> None:
     if https_port is None:
         logger.warn(
             "Running over plain HTTP only: the PIN and typed text are visible on the network. "
-            "Run scripts/generate_cert.sh to create cert.pem/key.pem here, then restart "
+            f"Run remote-input-board-generate-cert to create cert.pem/key.pem in {base_dir}, then restart "
             "(HTTPS is picked up automatically on port "
             f"{os.environ.get('HTTPS_PORT', str(port + 1))}; SSL_CERT_FILE/SSL_KEY_FILE can override paths)."
         )

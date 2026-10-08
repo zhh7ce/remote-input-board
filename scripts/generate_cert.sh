@@ -5,11 +5,15 @@
 #   scripts/generate_cert.sh [IP ...]
 #
 # Without arguments it auto-detects all non-loopback IPv4 addresses and writes
-# ./cert.pem and ./key.pem (valid 10 years). Start the server afterwards with:
-#   SSL_CERT_FILE=$PWD/cert.pem SSL_KEY_FILE=$PWD/key.pem python3 -m py_remote_input
+# cert.pem/key.pem into the server's config directory
+# ($XDG_CONFIG_HOME/remote-input-board, default ~/.config/remote-input-board;
+# override with OUT_DIR). The server picks them up automatically on restart.
 set -euo pipefail
 
-out_dir="${OUT_DIR:-$PWD}"
+default_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/remote-input-board"
+out_dir="${OUT_DIR:-$default_config_dir}"
+mkdir -p "$out_dir"
+chmod 700 "$out_dir"
 cert="$out_dir/cert.pem"
 key="$out_dir/key.pem"
 
@@ -41,5 +45,4 @@ chmod 600 "$key"
 
 echo
 echo "Wrote $cert and $key"
-echo "Start with:"
-echo "  SSL_CERT_FILE=$cert SSL_KEY_FILE=$key python3 -m py_remote_input"
+echo "Restart remote-input-board (python3 -m py_remote_input); HTTPS is enabled automatically."
