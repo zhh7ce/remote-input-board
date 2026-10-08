@@ -5,6 +5,10 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+pin.txt
+trusted_devices.json
+cert.pem
+key.pem
 logs/
 *.log
 *.zip

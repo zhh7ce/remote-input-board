@@ -31,6 +31,28 @@ class FrontendTests(unittest.TestCase):
         self.assertIn("remoteInput.history", self.html)
         self.assertIn('id="historyList"', self.html)
 
+    def test_pin_lock_screen_uses_on_screen_keypad_without_text_input(self):
+        self.assertIn('id="lockOverlay"', self.html)
+        self.assertIn('id="lockDots"', self.html)
+        self.assertIn('id="keypad"', self.html)
+        self.assertIn("renderKeypad", self.html)
+        self.assertIn("pressDigit", self.html)
+        # Digits come from button taps, not a system-keyboard input.
+        lock_section = self.html.split('id="lockOverlay"', 1)[1].split("</script>", 1)[0]
+        self.assertNotIn("<input", lock_section)
+        self.assertNotIn('contenteditable', lock_section)
+
+    def test_pin_auth_flow_and_bearer_token(self):
+        self.assertIn('"/api/auth"', self.html)
+        self.assertIn('"/api/auth-info"', self.html)
+        self.assertIn('"/api/logout"', self.html)
+        self.assertIn("remoteInput.token", self.html)
+        self.assertIn("Authorization", self.html)
+        self.assertIn('type: "auth"', self.html)
+        self.assertIn("authRequired", self.html)
+        self.assertIn('id="lockButton"', self.html)
+        self.assertIn("lockDevice", self.html)
+
     def test_removed_windows_features_are_gone(self):
         self.assertNotIn("trackpad", self.html)
         self.assertNotIn("/api/key", self.html)

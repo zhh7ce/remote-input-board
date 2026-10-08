@@ -3,6 +3,7 @@ import unittest
 from importlib import resources
 
 import py_remote_input
+from py_remote_input.auth import AuthStore
 from py_remote_input.web import handle_realtime_message, handle_request
 
 
@@ -237,6 +238,80 @@ class RealtimeMessageTests(unittest.TestCase):
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"], "boom")
+
+
+class PinGateTests(unittest.TestCase):
+    IP = "192.168.1.50"
+
+    def setUp(self):
+        self.auth = AuthStore("482915")
+        self.logger = FakeLogger()
+
+    def request(self, method, path, body=b"", *, token=None, ip=IP):
+        return handle_request(
+            method,
+            path,
+            body,
+            lambda _text: {"method": "wtype"},
+            self.logger,
+            auth=self.auth,
+            client_ip=ip,
+            token=token,
+        )
+
+    def test_page_and_auth_info_are_public(self):
+        page = self.request("GET", "/")
+        info = self.request("GET", "/api/auth-info")
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(json.loads(info.body.decode("utf-8"))["pinLength"], 6)
+
+    def test_stats_requires_pin(self):
+        response = self.request("GET", "/api/stats")
+        self.assertEqual(response.status_code, 401)
+        self.assertTrue(json.loads(response.body.decode("utf-8"))["authRequired"])
+
+    def test_type_requires_pin(self):
+        response = self.request("POST", "/api/type", json.dumps({"text": "hi"}).encode("utf-8"))
+        self.assertEqual(response.status_code, 401)
+
+    def test_wrong_pin_rejected(self):
+        response = self.request("POST", "/api/auth", json.dumps({"pin": "000000"}).encode("utf-8"))
+        self.assertEqual(response.status_code, 401)
+
+    def test_correct_pin_returns_token_and_unlocks_api(self):
+        response = self.request("POST", "/api/auth", json.dumps({"pin": "482915"}).encode("utf-8"))
+        self.assertEqual(response.status_code, 200)
+        token = json.loads(response.body.decode("utf-8"))["token"]
+
+        stats = self.request("GET", "/api/stats", token=token)
+        self.assertEqual(stats.status_code, 200)
+
+    def test_token_works_from_other_ip(self):
+        response = self.request("POST", "/api/auth", json.dumps({"pin": "482915"}).encode("utf-8"))
+        token = json.loads(response.body.decode("utf-8"))["token"]
+
+        foreign = self.request("GET", "/api/stats", token=token, ip="10.0.0.7")
+        self.assertEqual(foreign.status_code, 200)
+
+    def test_logout_revokes_token(self):
+        response = self.request("POST", "/api/auth", json.dumps({"pin": "482915"}).encode("utf-8"))
+        token = json.loads(response.body.decode("utf-8"))["token"]
+        self.assertEqual(self.request("GET", "/api/stats", token=token).status_code, 200)
+
+        logout = self.request("POST", "/api/logout", token=token)
+        self.assertEqual(logout.status_code, 200)
+        self.assertEqual(self.request("GET", "/api/stats", token=token).status_code, 401)
+
+    def test_empty_pin_is_bad_request(self):
+        response = self.request("POST", "/api/auth", json.dumps({"pin": "  "}).encode("utf-8"))
+        self.assertEqual(response.status_code, 400)
+
+    def test_rate_limit_returns_429(self):
+        for _ in range(5):
+            self.request("POST", "/api/auth", json.dumps({"pin": "111111"}).encode("utf-8"))
+        response = self.request("POST", "/api/auth", json.dumps({"pin": "482915"}).encode("utf-8"))
+        self.assertEqual(response.status_code, 429)
+        self.assertIn("retryAfter", json.loads(response.body.decode("utf-8")))
 
 
 if __name__ == "__main__":

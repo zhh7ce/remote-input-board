@@ -14,7 +14,7 @@
       --danger: #b73535;
       --shadow: 0 18px 42px rgba(20, 38, 31, 0.14);
     }
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     body {
       margin: 0;
       min-height: 100vh;
@@ -41,8 +41,19 @@
       margin-bottom: 8px;
     }
     h1 { font-size: 17px; margin: 0; }
+    .headerRight { display: flex; align-items: center; gap: 10px; }
     .totalChars { color: var(--muted); font-size: 13px; font-weight: 700; white-space: nowrap; }
     .totalChars strong { color: var(--accent); font-size: 16px; }
+    .lockButton {
+      min-height: 0;
+      padding: 6px 14px;
+      border-radius: 999px;
+      color: var(--muted);
+      background: rgba(22, 33, 29, 0.08);
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .lockButton:active { background: rgba(183, 53, 53, 0.15); color: var(--danger); }
     textarea {
       width: 100%;
       min-height: 220px;
@@ -134,6 +145,69 @@
       box-shadow: 0 0 0 4px rgba(15, 123, 95, 0.12);
       outline: none;
     }
+
+    /* ---------- 锁屏 PIN ---------- */
+    .lock-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 20px calc(24px + env(safe-area-inset-bottom));
+      background:
+        radial-gradient(120% 90% at 50% 0%, rgba(15, 123, 95, 0.28), transparent 60%),
+        var(--bg);
+      transition: opacity 0.25s ease;
+    }
+    .lock-overlay.hidden { opacity: 0; pointer-events: none; }
+    .lock-card { width: min(100%, 380px); display: grid; gap: 22px; justify-items: center; }
+    .lock-title { font-size: 24px; font-weight: 800; letter-spacing: 1px; }
+    .lock-sub { color: var(--muted); font-size: 14px; margin-top: -14px; text-align: center; }
+    .lock-dots { display: flex; gap: 22px; }
+    .lock-dots .pin-dot {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 2px solid var(--accent);
+      background: transparent;
+      transition: background 0.1s ease, transform 0.1s ease;
+    }
+    .lock-dots .pin-dot.filled { background: var(--accent); }
+    .lock-error { min-height: 20px; color: var(--danger); font-size: 14px; font-weight: 700; }
+    .lock-card.shake { animation: pinShake 0.4s ease; }
+    @keyframes pinShake {
+      0%, 100% { transform: translateX(0); }
+      20% { transform: translateX(-10px); }
+      40% { transform: translateX(10px); }
+      60% { transform: translateX(-7px); }
+      80% { transform: translateX(7px); }
+    }
+    .keypad {
+      display: grid;
+      grid-template-columns: repeat(3, 76px);
+      grid-auto-rows: 76px;
+      gap: 14px;
+      justify-content: center;
+    }
+    .key {
+      border-radius: 50%;
+      min-height: 0;
+      padding: 0;
+      font-size: 30px;
+      font-weight: 600;
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.9);
+      border: 1px solid var(--line);
+      box-shadow: 0 4px 12px rgba(20, 38, 31, 0.08);
+      user-select: none;
+    }
+    .key:active { background: rgba(15, 123, 95, 0.18); transform: scale(0.96); }
+    .key.spacer { visibility: hidden; pointer-events: none; box-shadow: none; border: 0; background: transparent; }
+    .key.back { font-size: 26px; color: var(--muted); }
+    @media (max-width: 360px) {
+      .keypad { grid-template-columns: repeat(3, 66px); grid-auto-rows: 66px; gap: 12px; }
+    }
   </style>
 </head>
 <body>
@@ -141,9 +215,12 @@
     <section class="card">
       <div class="composerHeader">
         <h1>远程输入板</h1>
-        <span class="totalChars">累计 <strong id="totalChars">0</strong> 字</span>
+        <div class="headerRight">
+          <span class="totalChars">累计 <strong id="totalChars">0</strong> 字</span>
+          <button class="lockButton" id="lockButton" type="button" title="取消信任本机，下次需要重新输入 PIN">锁定</button>
+        </div>
       </div>
-      <textarea id="text" autofocus placeholder="在这里输入文字，点「发送」就会输入到电脑当前光标处……"></textarea>
+      <textarea id="text" placeholder="在这里输入文字，点「发送」就会输入到电脑当前光标处……"></textarea>
       <label class="options">
         <input type="checkbox" id="sendOnEnter">
         回车直接发送（Shift+回车换行）
@@ -168,6 +245,17 @@
     </section>
   </div>
 
+  <!-- 锁屏：手机锁屏样式，只能点按数字键盘，不弹系统键盘 -->
+  <div class="lock-overlay" id="lockOverlay">
+    <div class="lock-card" id="lockCard">
+      <div class="lock-title">输入 PIN</div>
+      <div class="lock-sub" id="lockSub">输入电脑端显示的 PIN，仅首次配对需要</div>
+      <div class="lock-dots" id="lockDots"></div>
+      <div class="lock-error" id="lockError"></div>
+      <div class="keypad" id="keypad" role="group" aria-label="PIN 数字键盘"></div>
+    </div>
+  </div>
+
   <script>
     const text = document.getElementById("text");
     const sendButton = document.getElementById("sendButton");
@@ -179,10 +267,18 @@
     const historyList = document.getElementById("historyList");
     const clearHistoryButton = document.getElementById("clearHistory");
     const sendOnEnterCheckbox = document.getElementById("sendOnEnter");
+    const lockButton = document.getElementById("lockButton");
+
+    const lockOverlay = document.getElementById("lockOverlay");
+    const lockCard = document.getElementById("lockCard");
+    const lockDots = document.getElementById("lockDots");
+    const lockError = document.getElementById("lockError");
+    const keypad = document.getElementById("keypad");
 
     const HISTORY_STORAGE_KEY = "remoteInput.history";
     const ENTER_MODE_STORAGE_KEY = "remoteInput.sendOnEnter";
     const TOTAL_CHARS_STORAGE_KEY = "remoteInput.totalChars";
+    const TOKEN_STORAGE_KEY = "remoteInput.token";
     const HISTORY_LIMIT = 20;
 
     let socket = null;
@@ -191,6 +287,9 @@
     let requestSeq = 0;
     const pendingRequests = new Map();
     let sending = false;
+    let pinLength = 6;
+    let pinBuffer = "";
+    let pinBusy = false;
 
     function setStatus(message, state) {
       statusText.textContent = message;
@@ -200,22 +299,179 @@
 
     function genId() { return ++requestSeq; }
 
+    /* ---------- 锁屏 PIN ---------- */
+    function renderDots() {
+      lockDots.textContent = "";
+      for (let i = 0; i < pinLength; i++) {
+        const dot = document.createElement("span");
+        dot.className = "pin-dot" + (i < pinBuffer.length ? " filled" : "");
+        lockDots.appendChild(dot);
+      }
+    }
+
+    function renderKeypad() {
+      keypad.textContent = "";
+      const layout = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "back"];
+      for (const keyName of layout) {
+        const key = document.createElement("button");
+        key.type = "button";
+        if (keyName === "") {
+          key.className = "key spacer";
+        } else if (keyName === "back") {
+          key.className = "key back";
+          key.textContent = "⌫";
+          key.setAttribute("aria-label", "删除");
+          key.addEventListener("click", pressBackspace);
+        } else {
+          key.className = "key";
+          key.textContent = keyName;
+          key.addEventListener("click", () => pressDigit(keyName));
+        }
+        keypad.appendChild(key);
+      }
+    }
+
+    function setLockError(message) {
+      lockError.textContent = message || "";
+      if (message) {
+        lockCard.classList.remove("shake");
+        void lockCard.offsetWidth;
+        lockCard.classList.add("shake");
+        if (navigator.vibrate) navigator.vibrate(60);
+      }
+    }
+
+    function pressDigit(digit) {
+      if (pinBusy || pinBuffer.length >= pinLength) return;
+      pinBuffer += digit;
+      setLockError("");
+      renderDots();
+      if (navigator.vibrate) navigator.vibrate(8);
+      if (pinBuffer.length === pinLength) submitPin();
+    }
+
+    function pressBackspace() {
+      if (pinBusy) return;
+      pinBuffer = pinBuffer.slice(0, -1);
+      setLockError("");
+      renderDots();
+    }
+
+    function resetPinBuffer() {
+      pinBuffer = "";
+      renderDots();
+    }
+
+    async function submitPin() {
+      pinBusy = true;
+      setLockError("");
+      try {
+        const response = await fetch("/api/auth", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pin: pinBuffer }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (response.ok && payload.ok && payload.token) {
+          localStorage.setItem(TOKEN_STORAGE_KEY, payload.token);
+          unlock();
+          return;
+        }
+        if (response.status === 429) {
+          setLockError("尝试次数过多，请 " + (payload.retryAfter || 30) + " 秒后再试");
+        } else {
+          setLockError("PIN 不正确，请重试");
+        }
+        resetPinBuffer();
+      } catch (error) {
+        setLockError("网络错误：" + error.message);
+        resetPinBuffer();
+      } finally {
+        pinBusy = false;
+      }
+    }
+
+    function showLock() {
+      lockOverlay.classList.remove("hidden");
+      resetPinBuffer();
+    }
+
+    async function lockDevice() {
+      try {
+        await authFetch("/api/logout", { method: "POST" });
+      } catch {}
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
+      try { if (socket) socket.close(); } catch {}
+      clearInterval(pingTimer);
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+      setStatus("已取消信任本机，请重新输入 PIN。", "offline");
+      showLock();
+    }
+
+    lockButton.addEventListener("click", lockDevice);
+
+    function unlock() {
+      lockOverlay.classList.add("hidden");
+      setLockError("");
+      setStatus("已验证，正在连接实时通道……");
+      connectRealtime();
+      loadServerTotalChars();
+      text.focus();
+    }
+
+    /* ---------- 带鉴权的 fetch ---------- */
+    function authHeaders(extra) {
+      const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+      return Object.assign({ "Content-Type": "application/json" }, token ? { Authorization: "Bearer " + token } : {}, extra);
+    }
+
+    async function authFetch(url, options) {
+      const response = await fetch(url, Object.assign({}, options, { headers: authHeaders((options || {}).headers) }));
+      if (response.status === 401) {
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
+        showLock();
+        throw new Error("需要重新输入 PIN");
+      }
+      return response;
+    }
+
     /* ---------- WebSocket ---------- */
     function connectRealtime() {
+      if (!localStorage.getItem(TOKEN_STORAGE_KEY)) return;
+      if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
       const protocol = location.protocol === "https:" ? "wss:" : "ws:";
       socket = new WebSocket(protocol + "//" + location.host + "/ws");
 
       socket.addEventListener("open", () => {
-        setStatus("已连接（实时通道），发送前请先在电脑上点好输入位置。", "online");
-        schedulePing();
+        socket.send(JSON.stringify({ type: "auth", id: genId(), token: localStorage.getItem(TOKEN_STORAGE_KEY) }));
       });
 
       socket.addEventListener("message", (event) => {
         let payload;
         try { payload = JSON.parse(event.data); } catch { return; }
+
+        if (payload.type === "auth") {
+          if (payload.ok) {
+            setStatus("已连接（实时通道），发送前请先在电脑上点好输入位置。", "online");
+            schedulePing();
+          } else {
+            localStorage.removeItem(TOKEN_STORAGE_KEY);
+            showLock();
+            try { socket.close(); } catch {}
+          }
+          return;
+        }
+
         if (typeof payload.id === "number" && pendingRequests.has(payload.id)) {
           const { resolve, reject } = pendingRequests.get(payload.id);
           pendingRequests.delete(payload.id);
+          if (payload.authRequired) {
+            localStorage.removeItem(TOKEN_STORAGE_KEY);
+            showLock();
+            reject(new Error("需要重新输入 PIN"));
+            return;
+          }
           payload.ok ? resolve(payload) : reject(new Error(payload.error || "发送失败"));
         }
         if (typeof payload.totalChars === "number") updateTotalChars(payload.totalChars);
@@ -224,8 +480,10 @@
       socket.addEventListener("close", () => {
         clearInterval(pingTimer);
         failAllPending(new Error("实时通道已断开"));
-        setStatus("实时通道未连接，将改用 HTTP 发送。", "offline");
-        scheduleReconnect();
+        if (localStorage.getItem(TOKEN_STORAGE_KEY)) {
+          setStatus("实时通道未连接，将改用 HTTP 发送。", "offline");
+          scheduleReconnect();
+        }
       });
 
       socket.addEventListener("error", () => { try { socket.close(); } catch {} });
@@ -259,9 +517,8 @@
     }
 
     async function sendViaHttp(payloadText) {
-      const response = await fetch("/api/type", {
+      const response = await authFetch("/api/type", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: payloadText }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -272,6 +529,7 @@
     /* ---------- 发送 ---------- */
     async function sendText() {
       if (sending) return;
+      if (!localStorage.getItem(TOKEN_STORAGE_KEY)) { showLock(); return; }
       const payloadText = text.value;
       if (!payloadText.trim()) {
         setStatus("请输入要发送的文字。", "error");
@@ -333,7 +591,7 @@
 
     async function loadServerTotalChars() {
       try {
-        const response = await fetch("/api/stats");
+        const response = await authFetch("/api/stats");
         const payload = await response.json();
         if (payload.ok && typeof payload.totalChars === "number") updateTotalChars(payload.totalChars);
       } catch {}
@@ -375,10 +633,30 @@
       renderHistory();
     });
 
-    renderHistory();
-    loadServerTotalChars();
-    connectRealtime();
-    text.focus();
+    /* ---------- 启动 ---------- */
+    async function boot() {
+      renderKeypad();
+      renderDots();
+      renderHistory();
+      try {
+        const info = await fetch("/api/auth-info").then((r) => r.json());
+        if (info.ok && Number.isInteger(info.pinLength) && info.pinLength > 0) {
+          pinLength = info.pinLength;
+          renderDots();
+        }
+      } catch {}
+      if (localStorage.getItem(TOKEN_STORAGE_KEY)) {
+        lockOverlay.classList.add("hidden");
+        connectRealtime();
+        loadServerTotalChars();
+      } else {
+        showLock();
+        setStatus("未解锁：请先输入 PIN。", "offline");
+      }
+      text.focus();
+    }
+
+    boot();
   </script>
 </body>
 </html>

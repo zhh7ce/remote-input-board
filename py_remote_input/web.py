@@ -5,6 +5,8 @@ from importlib import resources
 import json
 import math
 
+from py_remote_input.auth import InvalidPin, RateLimited
+
 
 def load_html_page() -> str:
     return resources.files(__package__).joinpath("templates", "index.html").read_text(encoding="utf-8")
@@ -39,6 +41,13 @@ def _read_json_body(body: bytes, logger) -> dict | None:
 
 def _is_finite_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _unauthorized() -> Response:
+    return json_response(401, {"ok": False, "error": "PIN required.", "authRequired": True})
+
+
+PUBLIC_ROUTES = {("GET", "/"), ("GET", "/api/auth-info"), ("POST", "/api/auth")}
 
 
 def _finish_text_message(text: str, result: dict, record_history, text_stats) -> dict:
@@ -104,10 +113,45 @@ def handle_request(
     *,
     record_history=None,
     text_stats=None,
+    auth=None,
+    client_ip: str = "",
+    token: str | None = None,
 ) -> Response:
     if method == "GET" and path == "/":
         logger.info("Served mobile page.")
         return Response(200, "text/html; charset=utf-8", HTML_PAGE.encode("utf-8"))
+
+    if method == "GET" and path == "/api/auth-info":
+        pin_length = auth.pin_length if auth is not None else 0
+        return json_response(200, {"ok": True, "pinLength": pin_length})
+
+    if method == "POST" and path == "/api/auth":
+        payload = _read_json_body(body, logger)
+        if payload is None:
+            return json_response(400, {"ok": False, "error": "Invalid JSON body."})
+        pin = payload.get("pin", "")
+        if not isinstance(pin, str) or not pin.strip():
+            return json_response(400, {"ok": False, "error": "PIN is required."})
+        try:
+            session_token = auth.authenticate(client_ip, pin)
+        except RateLimited as exc:
+            logger.warn("PIN login rate limited.", {"ip": client_ip, "retryAfter": exc.retry_after})
+            return json_response(429, {"ok": False, "error": str(exc), "retryAfter": exc.retry_after})
+        except InvalidPin:
+            logger.warn("PIN login rejected.", {"ip": client_ip})
+            return json_response(401, {"ok": False, "error": "Incorrect PIN."})
+        logger.info("Client authenticated with PIN.", {"ip": client_ip})
+        return json_response(200, {"ok": True, "token": session_token})
+
+    if method == "POST" and path == "/api/logout":
+        revoked = auth.revoke(token)
+        logger.info("Device unpaired.", {"ip": client_ip, "revoked": revoked})
+        return json_response(200, {"ok": True})
+
+    if auth is not None and (method, path) not in PUBLIC_ROUTES:
+        if not auth.validate(token, client_ip):
+            logger.warn("Rejected unauthenticated request.", {"ip": client_ip, "path": path})
+            return _unauthorized()
 
     if method == "GET" and path == "/api/stats":
         total_chars = text_stats.get_total_chars() if text_stats is not None else 0
