@@ -5,6 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import signal
 import socket
 import ssl
 import threading
@@ -369,10 +370,17 @@ def serve() -> None:
         logger.info("Both HTTP and HTTPS are live; the page auto-selects ws/wss to match.")
     logger.info("Keep the target desktop app focused before sending text from your phone.")
 
+    # Handle SIGINT (Ctrl-C / kill -INT) and SIGTERM (systemd's default) the
+    # same way so shutdown flushes stats and paired devices either way.
     stop_event = threading.Event()
+
+    def _request_stop(_signum, _frame) -> None:
+        stop_event.set()
+
+    signal.signal(signal.SIGINT, _request_stop)
+    signal.signal(signal.SIGTERM, _request_stop)
     try:
         stop_event.wait()
-    except KeyboardInterrupt:
         logger.info("Server stopping...")
     finally:
         for running_server in servers:
