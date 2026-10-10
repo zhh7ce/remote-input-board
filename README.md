@@ -2,7 +2,7 @@
 
 **用手机浏览器给 Linux 电脑远程输入文字。** 电脑上跑一个小服务，手机打开网页输入文字，点发送就通过 [wtype](https://github.com/atx/wtype) 输入到电脑当前光标处。
 
-当前为 Linux/Wayland 精简版，只保留**文字发送**能力（实时 WebSocket，断连自动回退 HTTP）；另有一个可开关的小功能：输入框为空时点发送可在电脑上触发回车。鼠标触控板、快捷指令等 Windows 版功能暂未移植。
+当前为 Linux/Wayland 精简版，只保留**文字发送**能力（无长连接，纯 HTTP：token 与内容随请求发送）；另有一个可开关的小功能：输入框为空时点发送可在电脑上触发回车。鼠标触控板、快捷指令等 Windows 版功能暂未移植。
 
 每台手机**配对一次**：首次连接输入 **PIN 码**（手机锁屏样式的数字键盘点按，不弹系统键盘），服务端长期记住该设备，之后手机 IP 变化或服务重启都免输；可选 HTTPS 加密传输。
 
@@ -65,7 +65,7 @@ PIN required on first connect: 482915
 
 电脑和手机连同一个 WiFi，手机浏览器打开页面，先在锁屏界面点按数字键输入终端里的 PIN，解锁后才能发送文字。发送前记得在电脑上点一下目标窗口，把光标放好。
 
-页面底部有两个可选项：「回车直接发送（Shift+回车换行）」和「无文字时点发送 = 在电脑上按回车」——后者勾选后，输入框留空点发送就会在电脑上触发一次 Enter（比如用来发送 IM 消息、确认对话框），选择会记住在本手机上。顶部状态条固定显示连接状态：**已连接（实时通道）** 走 WebSocket，**未连接（HTTP 发送）** 时自动回退 HTTP，发送结果以短暂浮层提示，不再显示字数统计。
+页面底部有两个可选项：「回车直接发送（Shift+回车换行）」和「无文字时点发送 = 在电脑上按回车」——后者勾选后，输入框留空点发送就会在电脑上触发一次 Enter（比如用来发送 IM 消息、确认对话框），选择会记住在本手机上。发送结果以底部短暂浮层提示；发送的文字里若含换行，会自动折叠成空格并在浮层里提示，**绝不会替你提前按下回车**（需要回车就用空发送功能显式触发）。没有连接状态显示——未配对时就是全屏 PIN 锁屏，token 失效会自动回到锁屏。
 
 ### PIN 码与设备配对
 
@@ -76,7 +76,7 @@ PIN required on first connect: 482915
 - 手机首次输对 PIN 后拿到随机 token 存在浏览器本地；服务端把设备记到配置目录的 `trusted_devices.json`（只存 token 的 SHA-256，权限 600）。**之后手机 IP 变化（DHCP、私人无线局域网地址）或服务重启都不再要求 PIN**，直到主动取消配对
 - 取消配对：手机页面右上角「锁定」按钮（只取消本机），或删除 `~/.config/remote-input-board/trusted_devices.json`（所有手机重新配对）
 - 安全机制：PIN 常量时间比较；token 为 32 字节随机数，服务端只存哈希；同一 IP 连续输错 5 次 PIN 会被限流（15 秒起指数退避到 5 分钟）。token 与 IP 解绑后持有者即可访问，不可信网络请务必启用 HTTPS
-- WebSocket 也一样：连接后必须先发 `{"type":"auth","token":...}`，之前的任何消息都会被拒绝
+- HTTP 接口同样严格：携带无效 token 的请求一律 401 拒绝；GET 链接里的 token 与文本不会写入服务端日志（访问日志已整体关闭）
 
 ### 配置
 
@@ -89,7 +89,7 @@ PIN required on first connect: 482915
 
 ### HTTPS（可选）
 
-证书存在时 **HTTP 和 HTTPS 同时提供**：HTTP 始终在 `PORT`（默认 3210），HTTPS 在 `HTTPS_PORT`（默认 **3211**），两者共用同一套 PIN 和配对信息（在一个地址配对过，另一个也免 PIN）。手机用 `http://IP:3210` 或 `https://IP:3211` 打开都行，页面会自动匹配 ws/wss，不用改前端。明文 HTTP 中 PIN 和输入内容在网络上可见——**不可信网络请用 https 地址并考虑防火墙只放行 3211**。
+证书存在时 **HTTP 和 HTTPS 同时提供**：HTTP 始终在 `PORT`（默认 3210），HTTPS 在 `HTTPS_PORT`（默认 **3211**），两者共用同一套 PIN 和配对信息（在一个地址配对过，另一个也免 PIN）。手机用 `http://IP:3210` 或 `https://IP:3211` 打开都行。明文 HTTP 中 PIN 和输入内容在网络上可见——**不可信网络请用 https 地址并考虑防火墙只放行 3211**。
 
 **方式一：自签证书（适合局域网 IP 访问，零成本）**
 
@@ -123,7 +123,7 @@ SSL_CERT_FILE=/path/cert.pem SSL_KEY_FILE=/path/key.pem \
 
 - 证书只对生成时写入的 IP 有效；用别的 IP 或主机名访问仍会报警告，换网络/IP 后重新跑一次脚本即可
 - 手机首次打开会有红色证书警告，这是自签证书的正常现象：
-  - **安卓 Chrome / Edge**：「高级 → 继续前往（不安全）」，点一次后页面和 wss 都会放行
+  - **安卓 Chrome / Edge**：「高级 → 继续前往（不安全）」，点一次后页面即放行
   - **iPhone Safari**：「显示详细信息 → 访问此网站」
   - **安卓 Firefox** 用的是自带证书库，个别版本不给"继续"入口，建议直接换 Chrome
 - 想彻底消除警告（不是点"继续"而是真信任）：把 `cert.pem` 传到手机安装——安卓在「设置 → 安全 → 加密与凭据 → 安装证书 → CA 证书」；iOS 安装描述文件后还要到「设置 → 通用 → 关于本机 → 证书信任设置」里启用
@@ -152,13 +152,17 @@ SSL_CERT_FILE=/path/cert.pem SSL_KEY_FILE=/path/key.pem \
 
 ### 实现说明
 
-- 除页面和 `/api/auth` 外，所有 HTTP 接口都要带 `Authorization: Bearer <token>`；token 由 `POST /api/auth` 用 PIN 换取，持久有效、不绑 IP，`POST /api/logout` 可注销本机
-- 文字经 WebSocket（`/ws`，首包 auth，之后消息 `{"type":"type","text":...}`）或 HTTP（`POST /api/type`，body `{"text":...}`）到达服务端
-- 空发送回车：WS 消息 `{"type":"key","key":"Return"}` 或 HTTP body `{"key":"Return"}`；服务端有按键白名单（当前仅 `Return`），非白名单返回 400。历史中记为 `{"kind":"key","key":"Return"}`，不计入累计字数
-- 页面协议自动跟随：HTTP 页面走 `ws://`，HTTPS 页面走 `wss://`
-- 服务端调用 `wtype <text>`；换行符会转成 `wtype -k Return`，长文本自动分批调用；单键则调用 `wtype -k Return`
+- 除页面和 `/api/auth` 外，所有 HTTP 接口都要带 token；token 由 `POST /api/auth` 用 PIN 换取，持久有效、不绑 IP，`POST /api/logout` 可注销本机。token 携带方式两种等价：`Authorization: Bearer <token>` 头，或 URL 查询参数 `?token=<token>`
+- 发送走无状态的 HTTP 请求，没有 WebSocket/长连接：
+  - `POST /api/type`，body `{"text":"..."}`（页面内部用法，长度不限）
+  - `GET /api/type?token=...&text=...`（**链接直发**：token 和文本全在链接里，适合快捷指令/书签/curl；限 600 字，换行用 `%0A`）
+  - `GET /api/type?token=...&key=Return`（触发回车）
+  - `GET /api/ping?token=...`（校验配对状态）
+- 打开 `http://IP:3210/?token=<token>` 可**跳过 PIN 直接配对**（页面把 token 存入浏览器后自动从地址栏抹掉）；把这条链接发给新手机即完成授权
+- 空发送回车：HTTP body `{"key":"Return"}`；服务端有按键白名单（当前仅 `Return`），非白名单返回 400。历史中记为 `{"kind":"key","key":"Return"}`，不计入累计字数
+- 服务端调用 `wtype <text>`；文本中的换行符会**折叠成单个空格**——因为打出的换行就是真实回车，会把半条消息提前提交/执行（终端里尤其危险）。需要回车时用空发送回车功能，它才会真的按 `wtype -k Return`；长文本自动分批调用
 - wtype 未安装时接口返回明确的错误提示，手机页面可见
 
 ### 技术栈
 
-`Python 标准库（http.server + 手写 WebSocket 帧）` `wtype` `原生 JS（无框架）`
+`Python 标准库（http.server）` `wtype` `原生 JS（无框架）`

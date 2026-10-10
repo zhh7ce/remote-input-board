@@ -98,21 +98,6 @@
     .sendButton { flex: 1; }
     button.secondary { color: var(--accent); background: rgba(15, 123, 95, 0.1); min-width: 96px; font-size: 15px; }
     button:disabled, button[aria-busy="true"] { opacity: 0.62; cursor: wait; }
-    .statusbar {
-      padding: 12px 14px;
-      font-size: 14px;
-      font-weight: 700;
-      min-height: 48px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .statusbar.connecting { color: var(--muted); }
-    .statusbar.online { color: var(--accent); }
-    .statusbar.offline { color: var(--danger); }
-    .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
-    .dot.online { background: var(--accent); }
-    .dot.offline { background: var(--danger); }
     .toast {
       position: fixed;
       left: 50%;
@@ -249,11 +234,6 @@
       </div>
     </section>
 
-    <section class="card statusbar connecting" id="statusbar">
-      <span class="dot" id="statusDot"></span>
-      <span id="statusText">正在连接…</span>
-    </section>
-
     <section class="card optionList">
       <label class="options">
         <input type="checkbox" id="sendOnEnter">
@@ -291,9 +271,6 @@
     const text = document.getElementById("text");
     const sendButton = document.getElementById("sendButton");
     const clearButton = document.getElementById("clearButton");
-    const statusbar = document.getElementById("statusbar");
-    const statusDot = document.getElementById("statusDot");
-    const statusText = document.getElementById("statusText");
     const toastNode = document.getElementById("toast");
     const historyList = document.getElementById("historyList");
     const clearHistoryButton = document.getElementById("clearHistory");
@@ -313,28 +290,10 @@
     const TOKEN_STORAGE_KEY = "remoteInput.token";
     const HISTORY_LIMIT = 20;
 
-    let socket = null;
-    let reconnectTimer = null;
-    let pingTimer = null;
-    let requestSeq = 0;
-    const pendingRequests = new Map();
     let sending = false;
     let pinLength = 6;
     let pinBuffer = "";
     let pinBusy = false;
-
-    /* 状态条只显示固定的连接状态，不夹杂发送结果等临时信息 */
-    const CONNECTION_LABELS = {
-      connecting: "正在连接…",
-      online: "已连接（实时通道）",
-      offline: "未连接（HTTP 发送）",
-    };
-    function setConnectionState(state) {
-      statusbar.classList.remove("connecting", "online", "offline");
-      statusbar.classList.add(state);
-      statusDot.className = "dot " + (state === "online" ? "online" : state === "offline" ? "offline" : "");
-      statusText.textContent = CONNECTION_LABELS[state] || CONNECTION_LABELS.connecting;
-    }
 
     let toastTimer = null;
     function showToast(message, isError) {
@@ -345,7 +304,7 @@
       toastTimer = setTimeout(() => toastNode.classList.remove("show"), 1800);
     }
 
-    function genId() { return ++requestSeq; }
+    function getToken() { return localStorage.getItem(TOKEN_STORAGE_KEY); }
 
     /* ---------- 锁屏 PIN ---------- */
     function renderDots() {
@@ -445,15 +404,13 @@
     }
 
     async function lockDevice() {
-      try {
-        await authFetch("/api/logout", { method: "POST" });
-      } catch {}
+      const token = getToken();
+      if (token) {
+        try {
+          await fetch("/api/logout", { method: "POST", headers: { Authorization: "Bearer " + token } });
+        } catch {}
+      }
       localStorage.removeItem(TOKEN_STORAGE_KEY);
-      try { if (socket) socket.close(); } catch {}
-      clearInterval(pingTimer);
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-      setConnectionState("offline");
       showLock();
     }
 
@@ -462,121 +419,26 @@
     function unlock() {
       lockOverlay.classList.add("hidden");
       setLockError("");
-      setConnectionState("connecting");
-      connectRealtime();
       text.focus();
     }
 
-    /* ---------- 带鉴权的 fetch ---------- */
-    function authHeaders(extra) {
-      const token = localStorage.getItem(TOKEN_STORAGE_KEY);
-      return Object.assign({ "Content-Type": "application/json" }, token ? { Authorization: "Bearer " + token } : {}, extra);
-    }
-
-    async function authFetch(url, options) {
-      const response = await fetch(url, Object.assign({}, options, { headers: authHeaders((options || {}).headers) }));
+    /* ---------- 发送：token 与内容打在同一个请求里，无连接状态 ---------- */
+    async function sendRequest(payload) {
+      const token = getToken();
+      if (!token) { showLock(); throw new Error("需要配对"); }
+      const response = await fetch("/api/type?token=" + encodeURIComponent(token), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
       if (response.status === 401) {
         localStorage.removeItem(TOKEN_STORAGE_KEY);
         showLock();
         throw new Error("需要重新输入 PIN");
       }
-      return response;
-    }
-
-    /* ---------- WebSocket ---------- */
-    function connectRealtime() {
-      if (!localStorage.getItem(TOKEN_STORAGE_KEY)) return;
-      if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
-      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-      socket = new WebSocket(protocol + "//" + location.host + "/ws");
-
-      socket.addEventListener("open", () => {
-        socket.send(JSON.stringify({ type: "auth", id: genId(), token: localStorage.getItem(TOKEN_STORAGE_KEY) }));
-      });
-
-      socket.addEventListener("message", (event) => {
-        let payload;
-        try { payload = JSON.parse(event.data); } catch { return; }
-
-        if (payload.type === "auth") {
-          if (payload.ok) {
-            setConnectionState("online");
-            schedulePing();
-          } else {
-            localStorage.removeItem(TOKEN_STORAGE_KEY);
-            showLock();
-            try { socket.close(); } catch {}
-          }
-          return;
-        }
-
-        if (typeof payload.id === "number" && pendingRequests.has(payload.id)) {
-          const { resolve, reject } = pendingRequests.get(payload.id);
-          pendingRequests.delete(payload.id);
-          if (payload.authRequired) {
-            localStorage.removeItem(TOKEN_STORAGE_KEY);
-            showLock();
-            reject(new Error("需要重新输入 PIN"));
-            return;
-          }
-          payload.ok ? resolve(payload) : reject(new Error(payload.error || "发送失败"));
-        }
-      });
-
-      socket.addEventListener("close", () => {
-        clearInterval(pingTimer);
-        failAllPending(new Error("实时通道已断开"));
-        if (localStorage.getItem(TOKEN_STORAGE_KEY)) {
-          setConnectionState("offline");
-          scheduleReconnect();
-        }
-      });
-
-      socket.addEventListener("error", () => { try { socket.close(); } catch {} });
-    }
-
-    function scheduleReconnect() {
-      if (reconnectTimer !== null) return;
-      reconnectTimer = setTimeout(() => { reconnectTimer = null; connectRealtime(); }, 1000);
-    }
-
-    function schedulePing() {
-      clearInterval(pingTimer);
-      pingTimer = setInterval(() => {
-        if (socket && socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: "ping" }));
-        }
-      }, 25000);
-    }
-
-    function failAllPending(error) {
-      for (const { reject } of pendingRequests.values()) reject(error);
-      pendingRequests.clear();
-    }
-
-    function sendRealtime(message) {
-      return new Promise((resolve, reject) => {
-        const id = genId();
-        pendingRequests.set(id, { resolve, reject });
-        socket.send(JSON.stringify(Object.assign({ id }, message)));
-      });
-    }
-
-    async function sendViaHttp(payload) {
-      const httpPayload = Object.assign({}, payload);
-      delete httpPayload.type;  // "type" is a WebSocket-only envelope field
-      const response = await authFetch("/api/type", {
-        method: "POST",
-        body: JSON.stringify(httpPayload),
-      });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.ok) throw new Error(data.error || "发送失败");
       return data;
-    }
-
-    async function dispatch(payload) {
-      const online = socket && socket.readyState === WebSocket.OPEN;
-      return online ? sendRealtime(payload) : sendViaHttp(payload);
     }
 
     /* ---------- 发送 ---------- */
@@ -591,7 +453,7 @@
         sending = true;
         sendButton.setAttribute("aria-busy", "true");
         try {
-          await dispatch({ type: "key", key: "Return" });
+          await sendRequest({ key: "Return" });
           text.value = "";
           showToast("已发送回车");
           text.focus();
@@ -608,10 +470,11 @@
       sendButton.setAttribute("aria-busy", "true");
       sendButton.textContent = "发送中……";
       try {
-        await dispatch({ type: "type", text: payloadText });
+        await sendRequest({ text: payloadText });
         addHistoryItem(payloadText);
         text.value = "";
         text.focus();
+        if (/\r?\n/.test(payloadText)) showToast("换行已转为空格");
       } catch (error) {
         showToast("发送失败：" + error.message, true);
       } finally {
@@ -680,10 +543,37 @@
     });
 
     /* ---------- 启动 ---------- */
+    function adoptUrlToken() {
+      // http://host:port/?token=xxx 打开即完成配对；随后从地址栏抹掉 token。
+      const params = new URLSearchParams(location.search);
+      const urlToken = params.get("token");
+      if (!urlToken) return;
+      localStorage.setItem(TOKEN_STORAGE_KEY, urlToken);
+      params.delete("token");
+      const rest = params.toString();
+      history.replaceState(null, "", location.pathname + (rest ? "?" + rest : ""));
+    }
+
+    async function checkPairing() {
+      const token = getToken();
+      if (!token) { showLock(); return; }
+      try {
+        const response = await fetch("/api/ping?token=" + encodeURIComponent(token));
+        if (response.ok) {
+          unlock();
+          return;
+        }
+        // 401 = 配对已被撤销，token 作废；网络错误则保留 token。
+        if (response.status === 401) localStorage.removeItem(TOKEN_STORAGE_KEY);
+      } catch {}
+      showLock();
+    }
+
     async function boot() {
       renderKeypad();
       renderDots();
       renderHistory();
+      adoptUrlToken();
       try {
         const info = await fetch("/api/auth-info").then((r) => r.json());
         if (info.ok && Number.isInteger(info.pinLength) && info.pinLength > 0) {
@@ -691,14 +581,7 @@
           renderDots();
         }
       } catch {}
-      if (localStorage.getItem(TOKEN_STORAGE_KEY)) {
-        lockOverlay.classList.add("hidden");
-        setConnectionState("connecting");
-        connectRealtime();
-      } else {
-        showLock();
-        setConnectionState("offline");
-      }
+      await checkPairing();
       text.focus();
     }
 

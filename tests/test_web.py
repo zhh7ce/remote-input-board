@@ -4,7 +4,7 @@ from importlib import resources
 
 import py_remote_input
 from py_remote_input.auth import AuthStore
-from py_remote_input.web import handle_realtime_message, handle_request
+from py_remote_input.web import MAX_GET_TEXT_CHARS, handle_request
 
 
 class FakeLogger:
@@ -26,13 +26,6 @@ class FakeTextStats:
         self.total = total
 
     def get_total_chars(self):
-        return self.total
-
-    def add_text(self, _text):
-        return self.total
-
-    def save_total_chars(self, total):
-        self.total = total
         return self.total
 
 
@@ -196,124 +189,102 @@ class HttpEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
 
 
-class RealtimeMessageTests(unittest.TestCase):
-    def test_ping_returns_pong(self):
-        result = handle_realtime_message({"type": "ping"}, FakeLogger())
+class UrlApiTests(unittest.TestCase):
+    """GET /api/type: token + text/key all carried in the URL."""
 
-        self.assertEqual(result, {"ok": True, "type": "pong"})
-
-    def test_type_message_calls_typer_and_records_history(self):
+    def test_get_type_calls_typer_and_records_history(self):
         calls = []
         records = []
-        result = handle_realtime_message(
-            {"type": "type", "text": "你好"},
+        response = handle_request(
+            "GET",
+            "/api/type",
+            b"",
+            lambda text: calls.append(text) or {"method": "wtype"},
             FakeLogger(),
-            type_text=lambda text: calls.append(text) or {"method": "wtype", "charCount": 2},
-            record_history=lambda item: records.append(item),
+            record_history=records.append,
+            query={"token": "t", "text": "链接发送"},
         )
 
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["type"], "type")
-        self.assertEqual(result["sentChars"], 2)
-        self.assertEqual(calls, ["你好"])
-        self.assertEqual(records, [{"kind": "text", "text": "你好"}])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, ["链接发送"])
+        self.assertEqual(records, [{"kind": "text", "text": "链接发送"}])
+        payload = json.loads(response.body.decode("utf-8"))
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["sentChars"], 4)
 
-    def test_type_message_rejects_empty_text(self):
-        result = handle_realtime_message(
-            {"type": "type", "text": "  "},
-            FakeLogger(),
-            type_text=lambda _text: {},
-        )
-
-        self.assertFalse(result["ok"])
-        self.assertIn("Text is required", result["error"])
-
-    def test_type_message_when_unconfigured(self):
-        result = handle_realtime_message({"type": "type", "text": "hi"}, FakeLogger())
-
-        self.assertFalse(result["ok"])
-        self.assertIn("not configured", result["error"])
-
-    def test_key_message_presses_return_and_records_history(self):
+    def test_get_type_key_presses_return(self):
         pressed = []
         records = []
-        result = handle_realtime_message(
-            {"type": "key", "key": "Return"},
+        response = handle_request(
+            "GET",
+            "/api/type",
+            b"",
+            lambda _text: {},
             FakeLogger(),
             press_key=lambda key: pressed.append(key) or {"method": "wtype", "key": key},
-            record_history=lambda item: records.append(item),
+            record_history=records.append,
+            query={"key": "Return"},
         )
 
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["type"], "key")
+        self.assertEqual(response.status_code, 200)
         self.assertEqual(pressed, ["Return"])
         self.assertEqual(records, [{"kind": "key", "key": "Return"}])
+        self.assertNotIn("totalChars", json.loads(response.body.decode("utf-8")))
 
-    def test_key_message_rejects_unknown_keysym(self):
-        result = handle_realtime_message(
-            {"type": "key", "key": "Escape"},
-            FakeLogger(),
-            press_key=lambda key: {},
+    def test_get_type_rejects_unsupported_key(self):
+        response = handle_request(
+            "GET", "/api/type", b"", lambda _text: {}, FakeLogger(),
+            press_key=lambda key: {}, query={"key": "Escape"},
         )
 
-        self.assertFalse(result["ok"])
-        self.assertIn("Unsupported key", result["error"])
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Unsupported key", response.body.decode("utf-8"))
 
-    def test_get_stats_returns_total(self):
-        result = handle_realtime_message(
-            {"type": "getStats"},
-            FakeLogger(),
-            text_stats=FakeTextStats(12345),
+    def test_get_type_rejects_missing_params(self):
+        response = handle_request(
+            "GET", "/api/type", b"", lambda _text: {}, FakeLogger(), query={},
         )
 
-        self.assertEqual(result["type"], "stats")
-        self.assertEqual(result["totalChars"], 12345)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("text or key", response.body.decode("utf-8"))
 
-    def test_set_stats_saves_total(self):
-        stats = FakeTextStats(100)
-        result = handle_realtime_message(
-            {"type": "setStats", "totalChars": 500},
-            FakeLogger(),
-            text_stats=stats,
+    def test_get_type_rejects_empty_text(self):
+        response = handle_request(
+            "GET", "/api/type", b"", lambda _text: {}, FakeLogger(), query={"text": "  "},
         )
 
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["totalChars"], 500)
-        self.assertEqual(stats.get_total_chars(), 500)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Text is required", response.body.decode("utf-8"))
 
-    def test_set_stats_rejects_non_numeric(self):
-        result = handle_realtime_message(
-            {"type": "setStats", "totalChars": "abc"},
+    def test_get_type_caps_url_text_length(self):
+        response = handle_request(
+            "GET",
+            "/api/type",
+            b"",
+            lambda _text: {},
             FakeLogger(),
-            text_stats=FakeTextStats(),
+            query={"text": "好" * (MAX_GET_TEXT_CHARS + 1)},
         )
 
-        self.assertFalse(result["ok"])
-        self.assertIn("numeric totalChars", result["error"])
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("too long", response.body.decode("utf-8"))
 
-    def test_unknown_message_is_rejected(self):
-        result = handle_realtime_message({"type": "mouseMove", "dx": 1}, FakeLogger())
-
-        self.assertFalse(result["ok"])
-        self.assertIn("Unsupported realtime message", result["error"])
-
-    def test_non_object_payload_is_rejected(self):
-        result = handle_realtime_message(["nope"], FakeLogger())
-
-        self.assertFalse(result["ok"])
-
-    def test_typer_exception_is_caught(self):
-        def type_text(_text):
-            raise RuntimeError("boom")
-
-        result = handle_realtime_message(
-            {"type": "type", "text": "hi"},
+    def test_get_type_allows_text_at_limit(self):
+        response = handle_request(
+            "GET",
+            "/api/type",
+            b"",
+            lambda _text: {"method": "wtype"},
             FakeLogger(),
-            type_text=type_text,
+            query={"text": "好" * MAX_GET_TEXT_CHARS},
         )
 
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["error"], "boom")
+        self.assertEqual(response.status_code, 200)
+
+    def test_ping_endpoint_exists(self):
+        response = handle_request("GET", "/api/ping", b"", lambda _text: {}, FakeLogger())
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(json.loads(response.body.decode("utf-8"))["ok"])
 
 
 class PinGateTests(unittest.TestCase):
@@ -323,7 +294,7 @@ class PinGateTests(unittest.TestCase):
         self.auth = AuthStore("482915")
         self.logger = FakeLogger()
 
-    def request(self, method, path, body=b"", *, token=None, ip=IP):
+    def request(self, method, path, body=b"", *, token=None, ip=IP, query=None):
         return handle_request(
             method,
             path,
@@ -333,6 +304,7 @@ class PinGateTests(unittest.TestCase):
             auth=self.auth,
             client_ip=ip,
             token=token,
+            query=query,
         )
 
     def test_page_and_auth_info_are_public(self):
@@ -350,6 +322,13 @@ class PinGateTests(unittest.TestCase):
         response = self.request("POST", "/api/type", json.dumps({"text": "hi"}).encode("utf-8"))
         self.assertEqual(response.status_code, 401)
 
+    def test_get_type_and_ping_require_pin(self):
+        get_type = self.request("GET", "/api/type", query={"text": "hi"})
+        ping = self.request("GET", "/api/ping")
+        self.assertEqual(get_type.status_code, 401)
+        self.assertEqual(ping.status_code, 401)
+        self.assertTrue(json.loads(get_type.body.decode("utf-8"))["authRequired"])
+
     def test_wrong_pin_rejected(self):
         response = self.request("POST", "/api/auth", json.dumps({"pin": "000000"}).encode("utf-8"))
         self.assertEqual(response.status_code, 401)
@@ -361,6 +340,47 @@ class PinGateTests(unittest.TestCase):
 
         stats = self.request("GET", "/api/stats", token=token)
         self.assertEqual(stats.status_code, 200)
+
+    def test_bearer_token_still_works(self):
+        response = self.request("POST", "/api/auth", json.dumps({"pin": "482915"}).encode("utf-8"))
+        token = json.loads(response.body.decode("utf-8"))["token"]
+
+        response = handle_request(
+            "POST",
+            "/api/type",
+            json.dumps({"text": "头令牌"}).encode("utf-8"),
+            lambda _text: {"method": "wtype"},
+            self.logger,
+            auth=self.auth,
+            client_ip=self.IP,
+            token=token,
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_query_token_unlocks_get_and_post(self):
+        response = self.request("POST", "/api/auth", json.dumps({"pin": "482915"}).encode("utf-8"))
+        token = json.loads(response.body.decode("utf-8"))["token"]
+
+        get_type = self.request("GET", "/api/type", query={"token": token, "text": "查令牌"})
+        self.assertEqual(get_type.status_code, 200)
+
+        post_type = self.request("POST", "/api/type", json.dumps({"text": "hi"}).encode("utf-8"), query={"token": token})
+        self.assertEqual(post_type.status_code, 200)
+
+        ping = self.request("GET", "/api/ping", query={"token": token})
+        self.assertEqual(ping.status_code, 200)
+
+    def test_invalid_query_token_rejected(self):
+        response = self.request("GET", "/api/type", query={"token": "forged", "text": "hi"})
+        self.assertEqual(response.status_code, 401)
+
+    def test_bearer_takes_precedence_over_query_token(self):
+        response = self.request("POST", "/api/auth", json.dumps({"pin": "482915"}).encode("utf-8"))
+        good = json.loads(response.body.decode("utf-8"))["token"]
+
+        # A bad query token must not downgrade a valid Bearer header.
+        response = self.request("GET", "/api/ping", token=good, query={"token": "forged"})
+        self.assertEqual(response.status_code, 200)
 
     def test_token_works_from_other_ip(self):
         response = self.request("POST", "/api/auth", json.dumps({"pin": "482915"}).encode("utf-8"))
@@ -377,6 +397,14 @@ class PinGateTests(unittest.TestCase):
         logout = self.request("POST", "/api/logout", token=token)
         self.assertEqual(logout.status_code, 200)
         self.assertEqual(self.request("GET", "/api/stats", token=token).status_code, 401)
+
+    def test_logout_accepts_query_token(self):
+        response = self.request("POST", "/api/auth", json.dumps({"pin": "482915"}).encode("utf-8"))
+        token = json.loads(response.body.decode("utf-8"))["token"]
+
+        logout = self.request("POST", "/api/logout", query={"token": token})
+        self.assertEqual(logout.status_code, 200)
+        self.assertEqual(self.request("GET", "/api/ping", query={"token": token}).status_code, 401)
 
     def test_empty_pin_is_bad_request(self):
         response = self.request("POST", "/api/auth", json.dumps({"pin": "  "}).encode("utf-8"))

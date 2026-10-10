@@ -4,45 +4,45 @@ from unittest import mock
 from py_remote_input import typer
 
 
-class WtypeArgsTests(unittest.TestCase):
-    def test_plain_text_becomes_single_argument(self):
-        self.assertEqual(typer.build_wtype_args("hello 你好"), ["hello 你好"])
+class FlattenLineBreaksTests(unittest.TestCase):
+    def test_lf_becomes_single_space(self):
+        self.assertEqual(typer.flatten_line_breaks("a\nb"), "a b")
 
-    def test_lf_newline_maps_to_return_keysym(self):
-        self.assertEqual(
-            typer.build_wtype_args("a\nb"),
-            ["a", "-k", typer.RETURN_KEYSYM, "b"],
-        )
+    def test_crlf_and_cr_become_single_space(self):
+        self.assertEqual(typer.flatten_line_breaks("a\r\nb\rc"), "a b c")
 
-    def test_crlf_newline_maps_to_single_return(self):
-        self.assertEqual(
-            typer.build_wtype_args("a\r\nb\r\n"),
-            ["a", "-k", typer.RETURN_KEYSYM, "b", "-k", typer.RETURN_KEYSYM],
-        )
+    def test_newline_runs_collapse_into_one_space(self):
+        self.assertEqual(typer.flatten_line_breaks("a\n\n\nb"), "a b")
 
-    def test_multiple_blank_lines_each_press_return(self):
-        self.assertEqual(
-            typer.build_wtype_args("\n\n"),
-            ["-k", typer.RETURN_KEYSYM, "-k", typer.RETURN_KEYSYM],
-        )
+    def test_blank_text_becomes_single_space(self):
+        self.assertEqual(typer.flatten_line_breaks("\n\n"), " ")
+
+
+class WtypeBatchesTests(unittest.TestCase):
+    def test_plain_text_single_batch_single_argument(self):
+        self.assertEqual(typer.build_wtype_batches("hello 你好"), [["hello 你好"]])
+
+    def test_line_breaks_never_press_enter(self):
+        batches = typer.build_wtype_batches("第一行\n第二行")
+
+        self.assertEqual(batches, [["第一行 第二行"]])
+        self.assertNotIn("-k", batches[0])
 
     def test_batches_split_when_text_exceeds_char_limit(self):
-        batches = typer.build_wtype_batches("aaa\nbb\nc", char_limit=3)
-
         self.assertEqual(
-            batches,
-            [
-                ["aaa", "-k", typer.RETURN_KEYSYM],
-                ["bb", "-k", typer.RETURN_KEYSYM, "c"],
-            ],
+            typer.build_wtype_batches("aaaaa", char_limit=3),
+            [["aaa"], ["aa"]],
         )
 
-    def test_short_text_uses_single_batch(self):
-        self.assertEqual(typer.build_wtype_batches("a\nb"), [["a", "-k", typer.RETURN_KEYSYM, "b"]])
+    def test_batches_split_flattened_text(self):
+        self.assertEqual(
+            typer.build_wtype_batches("aaa\nbbbb", char_limit=3),
+            [["aaa"], [" bb"], ["bb"]],
+        )
 
 
 class TypeTextTests(unittest.TestCase):
-    def test_type_text_invokes_wtype_with_built_args(self):
+    def test_type_text_never_presses_enter(self):
         with (
             mock.patch.object(typer, "ensure_wtype_available", return_value="/usr/bin/wtype"),
             mock.patch.object(typer.subprocess, "run") as run,
@@ -50,7 +50,7 @@ class TypeTextTests(unittest.TestCase):
             result = typer.type_text("a\nb")
 
         run.assert_called_once()
-        self.assertEqual(run.call_args.args[0], ["wtype", "a", "-k", "Return", "b"])
+        self.assertEqual(run.call_args.args[0], ["wtype", "a b"])
         self.assertTrue(run.call_args.kwargs["check"])
         self.assertEqual(result["method"], "wtype")
         self.assertEqual(result["charCount"], 3)
@@ -63,9 +63,10 @@ class TypeTextTests(unittest.TestCase):
         ):
             typer.type_text("aaa\nbbbb")
 
-        self.assertEqual(run.call_count, 2)
-        self.assertEqual(run.call_args_list[0].args[0][0], "wtype")
-        self.assertEqual(run.call_args_list[1].args[0][0], "wtype")
+        self.assertEqual(run.call_count, 3)
+        for call in run.call_args_list:
+            self.assertEqual(call.args[0][0], "wtype")
+            self.assertNotIn("-k", call.args[0])
 
     def test_missing_wtype_raises_clear_error(self):
         with mock.patch.object(typer.shutil, "which", return_value=None):

@@ -2,7 +2,7 @@
 
 ## 项目简介
 
-远程输入板（Linux 版） — 用手机浏览器作为 Linux 电脑的远程文本输入面板。当前为精简版，核心是**文字发送**：手机网页发送文字，电脑端通过 `wtype`（Wayland virtual-keyboard）输入到当前光标处。另有可选的**空发送回车**：前端复选框控制（localStorage `remoteInput.enterWhenEmpty`），勾选后输入框为空点发送即按一次 Enter（`wtype -k Return`）。
+远程输入板（Linux 版） — 用手机浏览器作为 Linux 电脑的远程文本输入面板。当前为精简版，核心是**文字发送**：手机网页发送文字，电脑端通过 `wtype`（Wayland virtual-keyboard）输入到当前光标处。通信为**无状态纯 HTTP，无 WebSocket 长连接**：token 与文本可同置一条链接（`GET /api/type?token=...&text=...`），也可 Bearer 头 + POST body。另有可选的**空发送回车**：前端复选框控制（localStorage `remoteInput.enterWhenEmpty`），勾选后输入框为空点发送即按一次 Enter（`wtype -k Return`）。
 
 - **服务端口**: 3210（HTTP）/ 3211（HTTPS）
 - **Python 包**: `py_remote_input`（纯标准库，无第三方运行时依赖）
@@ -36,20 +36,23 @@ curl -s -X POST http://127.0.0.1:3210/api/type -H "Authorization: Bearer $TOKEN"
 # 空发送回车（等价前端勾选复选框后的行为）：
 curl -s -X POST http://127.0.0.1:3210/api/type -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -d '{"key":"Return"}'
+# 链接直发（token 与文本全在 URL 里，适合快捷指令/书签）：
+curl -sG http://127.0.0.1:3210/api/type --data-urlencode "token=$TOKEN" --data-urlencode "text=你好"
+# 校验配对：
+curl -s "http://127.0.0.1:3210/api/ping?token=$TOKEN"
 ```
 
 ## 关键文件说明
 
 | 文件 | 作用 |
 |------|------|
-| `py_remote_input/templates/index.html` | 前端页面（单文件，极简：输入框 + 发送 + 本地记录；状态条固定显示连接态 connecting/online/offline，发送结果走底部 toast；无累计字数 UI） |
-| `py_remote_input/server.py` | HTTP + WebSocket 服务入口（`build_handler` 把 `type_text` 与 `press_key` 一起注入 handler；`serve()` 组装 XDG 路径、迁移、日志、双端口） |
+| `py_remote_input/templates/index.html` | 前端页面（单文件，极简：输入框 + 发送 + 选项 + 本地记录；无状态条/累计字数 UI/WebSocket——未配对由全屏锁屏承担，token 失效 401 自动回锁屏；发送结果走底部 toast，含换行的文本发送后提示"换行已转为空格"） |
+| `py_remote_input/server.py` | HTTP 服务入口（`build_handler` 注入 `type_text` 与 `press_key`，解析 query 传给路由；`serve()` 组装 XDG 路径、迁移、日志、双端口；`log_message` 整体静默，防止 URL 里的 token/文本进日志） |
 | `py_remote_input/paths.py` | XDG 路径：`config_dir()`/`data_dir()`/`ensure_app_dirs()`/`migrate_legacy_files()`；覆盖变量 `REMOTE_INPUT_CONFIG_DIR`/`REMOTE_INPUT_DATA_DIR` |
-| `py_remote_input/web.py` | HTTP 路由 + WebSocket 消息处理（auth / type / key / ping / stats）；`ALLOWED_REMOTE_KEYS={"Return"}` 为远程按键白名单 |
+| `py_remote_input/web.py` | HTTP 路由 + 请求处理（auth / type / key / ping / stats）；token 接受 `Authorization: Bearer` 头或 `?token=` 查询参数；`ALLOWED_REMOTE_KEYS={"Return"}` 为远程按键白名单；`MAX_GET_TEXT_CHARS=600` 限制 URL 直发长度 |
 | `py_remote_input/auth.py` | PIN 加载与限流；trusted-device 配对：32 字节随机 token、服务端只存 SHA-256、落盘 `trusted_devices.json`（0600）、**不绑 IP、重启不失效**、`revoke()` 取消配对 |
-| `py_remote_input/typer.py` | Linux 文字输入：调用 `wtype`，换行转 `-k Return`，长文本分批；`press_key(keysym)` 按 `ALLOWED_KEYSYMS` 白名单校验后执行 `wtype -k <keysym>`，`press_return()` 为其便捷封装 |
+| `py_remote_input/typer.py` | Linux 文字输入：调用 `wtype`，**换行折叠为单个空格**（打出的换行=真实回车，会提前提交/执行半条消息，文本通道绝不自动按回车）；长文本按 `CHUNK_CHAR_LIMIT=4000` 分批；`press_key(keysym)` 按 `ALLOWED_KEYSYMS` 白名单校验后执行 `wtype -k <keysym>`，`press_return()` 为其便捷封装 |
 | `py_remote_input/stats.py` | 字数统计存储 |
-| `py_remote_input/websocket.py` | 手写 WebSocket 帧协议（标准库） |
 | `py_remote_input/logger.py` | 日志（同时输出 stdout 和文件） |
 | `scripts/rebuild_stats.py` | 从 history 重建 stats.json（默认读写 data 目录；安装后为 `/usr/bin/remote-input-board-rebuild-stats`） |
 | `scripts/generate_cert.sh` | 生成自签证书到配置目录（安装后为 `/usr/bin/remote-input-board-generate-cert`） |
@@ -66,11 +69,14 @@ curl -s -X POST http://127.0.0.1:3210/api/type -H "Authorization: Bearer $TOKEN"
 - `GET /`：手机页面（含锁屏，无需鉴权）
 - `GET /api/auth-info`：公开，返回 `{"pinLength": 6}`
 - `POST /api/auth`：公开，`{"pin": "..."}` 换 `{"token": "..."}`；token 为持久 trusted-device 凭证，**不绑 IP**，服务端只存其 SHA-256；错误 PIN 返回 401，触发限流返回 429 + `retryAfter`
-- `POST /api/logout`：携带有效 Bearer token，注销（取消配对）当前设备
-- `GET /api/stats`、`POST /api/type`：必须带 `Authorization: Bearer <token>`，否则 401 + `authRequired`
+- `POST /api/logout`：携带有效 token（Bearer 头或 `?token=`），注销（取消配对）当前设备
+- `GET /api/stats`、`GET|POST /api/type`、`GET /api/ping`：必须带 token——`Authorization: Bearer <token>` 头或 URL `?token=<token>` 查询参数（等价，头优先），否则 401 + `authRequired`
 - `POST /api/type` body 两种：`{"text":"..."}`（空文本 400，成功回含 `sentChars`/`totalChars`）或 `{"key":"Return"}`（单键，成功回 `{"ok":true,"key":"Return",...}`，无 totalChars；非白名单按键 400 `Unsupported key.`）
-- `GET /ws`：WebSocket；连上后首包必须是 `{"type":"auth","id":N,"token":"..."}`，鉴权前其它消息一律回 `authRequired`；通过后发 `{"type":"type","id":N,"text":"..."}`（原样回 `id`）或 `{"type":"key","id":N,"key":"Return"}`；另有 `ping`/`pong`、`getStats`/`setStats`
-- Handler 必须保持 `protocol_version = "HTTP/1.1"`：浏览器只接受 `HTTP/1.1 101` 的升级响应，返回 HTTP/1.0 会导致 WS 连上即断
+- `GET /api/type`：token/text/key 全在查询串；`key=Return` 优先于 `text`；text 上限 `MAX_GET_TEXT_CHARS=600`（超长 400 提示改 POST）；两者都没有 400
+- `GET /api/ping`：配对状态探针，有效 token 回 `{"ok":true}`，用于页面启动时校验
+- `GET /?token=<token>`：页面读取后存入 localStorage 并用 `history.replaceState` 抹掉地址栏——把带 token 的链接发给新设备即可免 PIN 配对（**链接含凭证，勿外发**）
+- 无 WebSocket：发送全部是无状态 HTTP 请求；`log_message` 整体静默，token 与文本不会进访问日志
+- Handler 保持 `protocol_version = "HTTP/1.1"`：启用 keep-alive，重复发送复用连接
 - 配对状态由 `AuthStore` 持久化在配置目录 `trusted_devices.json`：重启不失效，IP 变化不失效；删除该文件或调用 logout 才需要重新输 PIN
 
 ## HTTPS（可选，与 HTTP 同时监听）
@@ -79,7 +85,7 @@ curl -s -X POST http://127.0.0.1:3210/api/type -H "Authorization: Bearer $TOKEN"
 - 证书路径解析见 `server.resolve_tls_files`，语义同 shell `: "${SSL_CERT_FILE:=<config>/cert.pem}"`：**默认读配置目录的 `cert.pem`/`key.pem`，环境变量设了才覆盖**；只找到一个文件→启动报错并指出缺哪个
 - 自签证书用 `scripts/generate_cert.sh`（安装后 `remote-input-board-generate-cert`）生成（自动探测局域网 IP 写入 SAN，输出到配置目录 cert.pem/key.pem）；底层等价于 `openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 3650 -subj "/CN=remote-input" -addext "subjectAltName=IP:<LAN-IP>"`
 - 排查：启动日志 `HTTP on port X. HTTPS on port Y.` 两行都有才是双协议；只有 HTTP 行说明没找到 cert/key。协议与端口严格配对（3210 只说 HTTP，3211 只说 HTTPS）
-- 前端无需改动：页面是 https 时自动用 wss，是 http 时用 ws
+- 前端无需改动：所有发送都是同源相对路径 HTTP 请求，HTTP/HTTPS 自动跟随页面协议
 - 环境变量一览：`PORT`、`HTTPS_PORT`（不设则 PORT+1）、`PIN_CODE`（纯数字；不设则读/生成配置目录 `pin.txt`）、`SSL_CERT_FILE`、`SSL_KEY_FILE`（不设则默认配置目录下同名文件）、`XDG_CONFIG_HOME`/`XDG_DATA_HOME`、`REMOTE_INPUT_CONFIG_DIR`/`REMOTE_INPUT_DATA_DIR`（最高优先级的目录覆盖）
 - 从任意目录启动均可；旧版本写在 CWD 的 pin.txt/trusted_devices.json/cert/key/logs 首次启动时自动迁移到 XDG 目录（仅当新配置目录未初始化，且不覆盖已有文件）
 - 无证书（HTTP-only）时启动日志打 WARN：PIN 在网络上可见，不可信网络应生成证书并用 https 端口

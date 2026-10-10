@@ -9,15 +9,14 @@ import signal
 import socket
 import ssl
 import threading
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from py_remote_input import paths
 from py_remote_input.auth import TRUSTED_DEVICES_FILE_NAME, AuthStore, load_pin
 from py_remote_input.logger import Logger
 from py_remote_input.stats import TextStatsStore, count_text_history_chars
 from py_remote_input.typer import press_key, type_text
-from py_remote_input.web import handle_realtime_message, handle_request
-from py_remote_input.websocket import build_websocket_accept, encode_websocket_frame, read_websocket_frame
+from py_remote_input.web import handle_request
 
 
 def get_local_addresses(port: int) -> list[str]:
@@ -60,104 +59,12 @@ def build_history_recorder(log_dir: Path, stats_file_path: Path | None = None):
     return record_history, text_stats
 
 
-def _write_websocket_frame(writer, opcode: int, payload: bytes = b"") -> None:
-    writer.write(encode_websocket_frame(opcode, payload))
-    if hasattr(writer, "flush"):
-        writer.flush()
-
-
-def _send_ws_json(writer, payload: dict) -> None:
-    _write_websocket_frame(writer, 0x1, json.dumps(payload, ensure_ascii=False).encode("utf-8"))
-
-
-def serve_websocket_messages(
-    reader,
-    writer,
-    logger: Logger,
-    *,
-    type_text,
-    press_key=None,
-    auth: AuthStore,
-    client_ip: str,
-    record_history=None,
-    text_stats=None,
-) -> None:
-    authenticated = False
-    while True:
-        try:
-            frame = read_websocket_frame(reader)
-            if frame is None:
-                return
-            if frame.opcode == 0x8:
-                _write_websocket_frame(writer, 0x8)
-                return
-            if frame.opcode == 0x9:
-                _write_websocket_frame(writer, 0xA, frame.payload)
-                continue
-            if frame.opcode != 0x1:
-                continue
-
-            try:
-                payload = json.loads(frame.payload.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                _send_ws_json(writer, {"ok": False, "error": "Invalid realtime JSON."})
-                continue
-
-            if not isinstance(payload, dict):
-                _send_ws_json(writer, {"ok": False, "error": "Realtime message must be a JSON object."})
-                continue
-
-            request_id = payload.get("id")
-
-            if payload.get("type") == "auth":
-                token = payload.get("token", "")
-                if auth.validate(token, client_ip):
-                    authenticated = True
-                    logger.info("WebSocket authenticated.", {"ip": client_ip})
-                    result = {"ok": True, "type": "auth"}
-                else:
-                    logger.warn("WebSocket auth rejected.", {"ip": client_ip})
-                    result = {"ok": False, "type": "auth", "authRequired": True, "error": "PIN required."}
-                if isinstance(request_id, (str, int)):
-                    result["id"] = request_id
-                _send_ws_json(writer, result)
-                continue
-
-            if not authenticated:
-                result = {"ok": False, "authRequired": True, "error": "Authenticate with an auth message first."}
-                if isinstance(request_id, (str, int)):
-                    result["id"] = request_id
-                _send_ws_json(writer, result)
-                continue
-
-            result = handle_realtime_message(
-                payload,
-                logger,
-                type_text=type_text,
-                press_key=press_key,
-                record_history=record_history,
-                text_stats=text_stats,
-            )
-            if isinstance(request_id, (str, int)):
-                result["id"] = request_id
-            if not result.get("ok") or result.get("type") in {"pong", "stats", "type", "key"}:
-                _send_ws_json(writer, result)
-        except OSError as exc:
-            logger.warn("WebSocket connection closed.", {"error": str(exc)})
-            return
-
-
 def build_handler(logger: Logger, record_history, text_stats, type_text, auth: AuthStore, press_key=None):
     class RequestHandler(BaseHTTPRequestHandler):
-        # HTTP/1.1 is required: browsers reject a WebSocket upgrade response
-        # that is not "HTTP/1.1 101 Switching Protocols".
+        # HTTP/1.1 enables keep-alive so repeated sends reuse the connection.
         protocol_version = "HTTP/1.1"
 
         def do_GET(self) -> None:  # noqa: N802
-            parsed = urlparse(self.path)
-            if parsed.path == "/ws" and self.headers.get("Upgrade", "").lower() == "websocket":
-                self._handle_websocket()
-                return
             self._handle()
 
         def do_POST(self) -> None:  # noqa: N802
@@ -169,6 +76,8 @@ def build_handler(logger: Logger, record_history, text_stats, type_text, auth: A
             self.end_headers()
 
         def log_message(self, format: str, *args) -> None:  # noqa: A003
+            # Suppressed on purpose: request lines can contain the token and
+            # typed text (GET /api/type?token=...&text=...). Never log them.
             return
 
         def _send_cors_headers(self) -> None:
@@ -182,35 +91,9 @@ def build_handler(logger: Logger, record_history, text_stats, type_text, auth: A
                 return header[len("Bearer "):].strip() or None
             return None
 
-        def _handle_websocket(self) -> None:
-            websocket_key = self.headers.get("Sec-WebSocket-Key", "")
-            if not websocket_key:
-                self.send_error(400, "Missing Sec-WebSocket-Key")
-                return
-
-            self.send_response(101, "Switching Protocols")
-            self.send_header("Upgrade", "websocket")
-            self.send_header("Connection", "Upgrade")
-            self.send_header("Sec-WebSocket-Accept", build_websocket_accept(websocket_key))
-            self.end_headers()
-            self.close_connection = True
-            client_ip = self.client_address[0]
-            logger.info("WebSocket connected.", {"ip": client_ip})
-            serve_websocket_messages(
-                self.rfile,
-                self.wfile,
-                logger,
-                type_text=type_text,
-                press_key=press_key,
-                auth=auth,
-                client_ip=client_ip,
-                record_history=record_history,
-                text_stats=text_stats,
-            )
-            logger.info("WebSocket disconnected.", {"ip": client_ip})
-
         def _handle(self) -> None:
             parsed = urlparse(self.path)
+            query = {k: v[0] for k, v in parse_qs(parsed.query, keep_blank_values=True).items()}
             content_length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(content_length) if content_length else b""
             response = handle_request(
@@ -225,6 +108,7 @@ def build_handler(logger: Logger, record_history, text_stats, type_text, auth: A
                 auth=auth,
                 client_ip=self.client_address[0],
                 token=self._bearer_token(),
+                query=query,
             )
             self.send_response(response.status_code)
             self.send_header("Content-Type", response.content_type)
@@ -367,7 +251,7 @@ def serve() -> None:
             f"{os.environ.get('HTTPS_PORT', str(port + 1))}; SSL_CERT_FILE/SSL_KEY_FILE can override paths)."
         )
     else:
-        logger.info("Both HTTP and HTTPS are live; the page auto-selects ws/wss to match.")
+        logger.info("Both HTTP and HTTPS are live; open the https:// address for an encrypted connection.")
     logger.info("Keep the target desktop app focused before sending text from your phone.")
 
     # Handle SIGINT (Ctrl-C / kill -INT) and SIGTERM (systemd's default) the

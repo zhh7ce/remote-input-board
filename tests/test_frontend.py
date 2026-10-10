@@ -16,32 +16,46 @@ class FrontendTests(unittest.TestCase):
         self.assertIn('id="sendButton"', self.html)
         self.assertIn('id="clearButton"', self.html)
 
-    def test_connects_websocket_and_falls_back_to_http(self):
-        self.assertIn('"/ws"', self.html)
-        self.assertIn("new WebSocket", self.html)
-        self.assertIn('"/api/type"', self.html)
-        self.assertIn("connectRealtime", self.html)
-        self.assertIn("sendViaHttp", self.html)
+    def test_uses_stateless_http_no_websocket(self):
+        self.assertNotIn("new WebSocket", self.html)
+        self.assertNotIn('"/ws"', self.html)
+        self.assertNotIn("connectRealtime", self.html)
+        # Sends carry the token in the URL: POST /api/type?token=...
+        self.assertIn('"/api/type?token="', self.html)
+        self.assertIn("sendRequest", self.html)
 
-    def test_sends_type_message_with_text(self):
-        self.assertIn('type: "type"', self.html)
-        self.assertIn("sendText", self.html)
+    def test_sends_text_and_key_as_plain_payloads(self):
+        self.assertIn("sendRequest({ text: payloadText })", self.html)
+        self.assertIn("sendRequest({ key: \"Return\" })", self.html)
+        self.assertNotIn('type: "type"', self.html)
+        self.assertNotIn('type: "key"', self.html)
 
     def test_empty_send_can_press_enter_via_checkbox(self):
         self.assertIn('id="enterWhenEmpty"', self.html)
         self.assertIn("remoteInput.enterWhenEmpty", self.html)
-        self.assertIn('type: "key", key: "Return"', self.html)
 
     def test_total_char_counter_is_removed(self):
         self.assertNotIn("totalChars", self.html)
         self.assertNotIn("累计", self.html)
         self.assertNotIn("/api/stats", self.html)
 
-    def test_status_bar_shows_fixed_connection_state(self):
-        self.assertIn("setConnectionState", self.html)
-        self.assertIn("已连接（实时通道）", self.html)
-        self.assertIn("未连接（HTTP 发送）", self.html)
-        self.assertIn("正在连接…", self.html)
+    def test_pair_status_bar_is_removed(self):
+        # Stateless HTTP: the lock screen covers "unpaired", 401 auto-locks,
+        # so a persistent status bar carries no information.
+        self.assertNotIn("statusbar", self.html)
+        self.assertNotIn("setPairState", self.html)
+        self.assertNotIn("已配对", self.html)
+        self.assertNotIn("未配对", self.html)
+        # Ping is still used at boot to validate a stored token.
+        self.assertIn("/api/ping?token=", self.html)
+
+    def test_line_breaks_are_flattened_with_a_hint(self):
+        self.assertIn("换行已转为空格", self.html)
+
+    def test_url_token_auto_pairs(self):
+        self.assertIn("adoptUrlToken", self.html)
+        self.assertIn("history.replaceState", self.html)
+        self.assertIn("URLSearchParams", self.html)
 
     def test_keeps_local_history(self):
         self.assertIn("remoteInput.history", self.html)
@@ -58,14 +72,12 @@ class FrontendTests(unittest.TestCase):
         self.assertNotIn("<input", lock_section)
         self.assertNotIn('contenteditable', lock_section)
 
-    def test_pin_auth_flow_and_bearer_token(self):
+    def test_pin_auth_flow_and_token_storage(self):
         self.assertIn('"/api/auth"', self.html)
         self.assertIn('"/api/auth-info"', self.html)
         self.assertIn('"/api/logout"', self.html)
         self.assertIn("remoteInput.token", self.html)
-        self.assertIn("Authorization", self.html)
-        self.assertIn('type: "auth"', self.html)
-        self.assertIn("authRequired", self.html)
+        self.assertIn("response.status === 401", self.html)
         self.assertIn('id="lockButton"', self.html)
         self.assertIn("lockDevice", self.html)
 

@@ -1,12 +1,15 @@
 """Linux text input via the wtype virtual-keyboard client.
 
 wtype types unicode text into the currently focused Wayland surface using the
-virtual-keyboard protocol. Line breaks cannot be sent as plain unicode, so they
-are mapped to ``-k Return`` keysym events.
+virtual-keyboard protocol. A typed line break presses Enter in the focused
+window, which would submit/execute half a message early (e.g. run a
+half-typed shell command) — so line breaks are flattened to single spaces
+before typing, and Return is only ever pressed explicitly via ``press_key``.
 """
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import time
@@ -24,52 +27,19 @@ class WtypeNotFoundError(RuntimeError):
     """Raised when the wtype executable cannot be found on PATH."""
 
 
-def _split_segments(text: str) -> list[tuple[str, str]]:
-    """Split text into [("text", s) | ("key", "Return")] segments."""
-    segments: list[tuple[str, str]] = []
-    for line in text.splitlines(keepends=True):
-        if line.endswith("\r\n"):
-            body, has_newline = line[:-2], True
-        elif line.endswith(("\n", "\r")):
-            body, has_newline = line[:-1], True
-        else:
-            body, has_newline = line, False
-        if body:
-            segments.append(("text", body))
-        if has_newline:
-            segments.append(("key", RETURN_KEYSYM))
-    return segments
+def flatten_line_breaks(text: str) -> str:
+    """Collapse CR/LF/CRLF runs into a single space.
 
-
-def build_wtype_args(text: str) -> list[str]:
-    """Build the argv tail for one ``wtype`` invocation."""
-    args: list[str] = []
-    for kind, value in _split_segments(text):
-        if kind == "text":
-            args.append(value)
-        else:
-            args.extend(["-k", value])
-    return args
+    Typed newlines press Enter in the focused window; a remote text message
+    must never press Enter on its own — that is what ``press_key`` is for.
+    """
+    return re.sub(r"[\r\n]+", " ", text)
 
 
 def build_wtype_batches(text: str, char_limit: int = CHUNK_CHAR_LIMIT) -> list[list[str]]:
-    """Split the argv into multiple invocations bounded by total text length."""
-    batches: list[list[str]] = []
-    current: list[str] = []
-    current_size = 0
-    for kind, value in _split_segments(text):
-        if kind == "text" and current and current_size + len(value) > char_limit:
-            batches.append(current)
-            current = []
-            current_size = 0
-        if kind == "text":
-            current.append(value)
-            current_size += len(value)
-        else:
-            current.extend(["-k", value])
-    if current:
-        batches.append(current)
-    return batches
+    """Split flattened text into argv-tail chunks bounded by text length."""
+    flat = flatten_line_breaks(text)
+    return [[flat[i : i + char_limit]] for i in range(0, len(flat), char_limit)]
 
 
 def ensure_wtype_available() -> str:
@@ -83,11 +53,11 @@ def ensure_wtype_available() -> str:
 
 
 def type_text(text: str) -> dict:
-    """Type ``text`` into the focused window using wtype."""
+    """Type ``text`` into the focused window using wtype (never presses Enter)."""
     ensure_wtype_available()
+    flat = flatten_line_breaks(text)
     started_at = time.perf_counter()
-    batches = build_wtype_batches(text, CHUNK_CHAR_LIMIT)
-    for args in batches:
+    for args in build_wtype_batches(flat, CHUNK_CHAR_LIMIT):
         subprocess.run(
             [WTYPE_BIN, *args],
             check=True,
@@ -97,7 +67,7 @@ def type_text(text: str) -> dict:
         )
     return {
         "method": "wtype",
-        "charCount": len(text),
+        "charCount": len(flat),
         "durationMs": int((time.perf_counter() - started_at) * 1000),
     }
 
