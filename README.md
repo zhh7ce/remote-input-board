@@ -1,194 +1,201 @@
-# Remote Input Board 📱→💻
+# Remote Input Board
 
-**用手机浏览器给 Linux 电脑远程输入文字。** 电脑上跑一个小服务，手机打开网页输入文字，点发送就通过 [fcitx5-text-injector](https://github.com/zhh7ce/fcitx5-text-injector) 走 fcitx5 的 `commitString()` 提交到电脑当前光标处。
+手机浏览器作为 Linux 电脑的文字输入工具。电脑运行一个只用 Python 标准库的 HTTP 服务，手机在同一局域网打开网页输入文字，服务端把文字提交到当前焦点应用的光标位置。
 
-**为什么不用 wtype/ydotool 打字**：它们模拟的是按键事件，一旦系统开着中文输入法，按键会被输入法拦截并重新组字，导致输入乱掉。fcitx5 模块直接把成品文字提交给焦点应用，**输入法开着也正常**。回车仍由 wtype 发出（`commitString()` 产生不了真实按键）。
+## 工作方式
 
-当前为 Linux/Wayland 精简版，只保留**文字发送**能力（无长连接，纯 HTTP：token 与内容随请求发送）；另有一个可开关的小功能：输入框为空时点发送可在电脑上触发回车。鼠标触控板、快捷指令等 Windows 版功能暂未移植。
+文字经 Unix socket 交给 fcitx5 addon `fcitx5-text-injector`（源码在同级目录 `../fcitx5-text-injector`），由它调用 `commitString()` 提交文本，因此不受输入法影响，中文、日文、emoji 都能原样输入。回车单独走 `wtype -k Return`。多行文本原样提交，换行不会触发回车。
 
-每台手机**配对一次**：首次连接输入 **PIN 码**（手机锁屏样式的数字键盘点按，不弹系统键盘），服务端长期记住该设备，之后手机 IP 变化或服务重启都免输；可选 HTTPS 加密传输。
-
----
-
-### 环境要求
-
-- Linux + **Wayland** 会话 + **fcitx5** 输入法框架
-- 安装 `wtype`（仅远程回车用）：
-
-```bash
-# Debian / Ubuntu
-sudo apt install wtype
-# Arch
-sudo pacman -S wtype
-# Fedora
-sudo dnf install wtype
+```
+手机浏览器  ──HTTP──▶  Python 服务（本仓库）
+                          │
+              ┌───────────┴───────────┐
+              │ 文字                   │ 回车
+              ▼                       ▼
+   Unix socket JSON            wtype -k Return
+              │                       │
+              ▼                       ▼
+  fcitx5-text-injector        Wayland 合成按键
+  ic->commitString()          （Wayland-only）
+              │
+              ▼
+     当前焦点应用的输入框
 ```
 
-- 安装 **fcitx5-text-injector** 模块（文字输入用）。它是一个 fcitx5 addon，需要单独构建安装：
+通信为无状态 HTTP，不使用 WebSocket。token 与内容位于同一个请求中（`GET /api/type?token=…&text=…`），curl、浏览器快捷指令、书签都能直接调用。
+
+## 依赖
+
+| 依赖 | 必需性 | 用途 |
+|------|--------|------|
+| Python >= 3.11 | 必需 | 服务端本体，无第三方包 |
+| fcitx5 + fcitx5-text-injector | 必需 | 文字注入通道，本包不安装，需单独构建 |
+| wtype | 仅回车需要 | Wayland 按键模拟，只发文字可不装 |
+| openssl | 可选 | 生成自签 HTTPS 证书 |
+
+## 启动
 
 ```bash
-git clone https://github.com/zhh7ce/fcitx5-text-injector.git
-cd fcitx5-text-injector/packaging/arch
-makepkg -si
-# 装好后重启 fcitx5，让模块加载并创建 socket
-fcitx5 -rd
+python3 -m py_remote_input
 ```
 
-装好后应能看到 socket 文件，并能 ping 通：
+日志打印配置与数据目录、手机可访问的地址、本次 PIN，以及未启用 HTTPS 时的提示：
+
+```
+[2026-10-10T09:12:03.412Z] INFO Config directory: /home/you/.config/remote-input-board
+[2026-10-10T09:12:03.412Z] INFO Data directory:   /home/you/.local/share/remote-input-board
+[2026-10-10T09:12:03.415Z] INFO Generated a new PIN and saved it to .../pin.txt (chmod 600).
+[2026-10-10T09:12:03.500Z] INFO Remote input server is running. HTTP on port 3210.
+[2026-10-10T09:12:03.500Z] INFO Open one of these addresses on your phone:
+[2026-10-10T09:12:03.500Z] INFO http://192.168.1.20:3210
+[2026-10-10T09:12:03.500Z] INFO PIN required on first connect: 482915
+[2026-10-10T09:12:03.500Z] WARN Running over plain HTTP only: the PIN and typed text are visible on the network. ...
+```
+
+首次启动在配置目录生成 6 位数字 PIN（权限 0600），之后每次复用同一个；设了 `PIN_CODE` 则以其为准且不再写文件。
+
+## 配对
+
+手机浏览器打开上述地址，页面显示数字键盘，输入 PIN 即完成配对。配对 token 存在手机 localStorage，设备记录存在电脑磁盘，换 WiFi、IP 变化、服务重启都不需要重新输入 PIN。页面右上角的"锁定"调用 `/api/logout` 取消本机信任并回到 PIN 页面。
+
+打开 `http://host:3210/?token=<token>` 会自动完成配对，页面随后从地址栏移除 token，可以把这种链接存成快捷方式给其它设备用。
+
+## 页面与选项
+
+页面是单个 HTML 文件，原生 JS，无框架、无构建步骤。
+
+- 输入框与发送、清空按钮：发送后清空输入框。
+- 回车直接发送（Shift+回车换行）：默认关闭。判断条件包含 `isComposing`，输入法候选过程中的回车不会触发发送。
+- 无文字时点发送等于在电脑上按回车：默认关闭，开启后空发送调用 `wtype` 提交一次真实按键。
+- 发送记录：最近 20 条保存在手机本地，点击可填回输入框，支持一键清空，不与电脑同步。
+
+## HTTPS
+
+HTTP 始终监听 `PORT`。当配置目录里 cert.pem 和 key.pem 同时存在时，额外在 `HTTPS_PORT`（默认 `PORT+1`）启动 TLS 监听，两个端口共用同一个 handler，PIN、配对与历史互通。
+
+```bash
+remote-input-board-generate-cert        # 源码树里为 scripts/generate_cert.sh
+```
+
+脚本探测所有全局 IPv4 地址写入 SAN，有效期 3650 天，输出到配置目录。生成后重启服务即可启用，页面全部使用同源相对路径，协议自动跟随，前端无需改动。
+
+只有其中一个文件存在时启动报错并指出缺失项；`HTTPS_PORT` 与 `PORT` 相同（非 0）同样报错。两个文件都没有时只跑 HTTP，并在日志中提示 PIN 和文本在网络上明文可见。自签证书需要在手机上手动信任一次。
+
+## API
+
+除 `GET /`、`GET /api/auth-info`、`POST /api/auth` 外，所有接口都需要 token。token 可以放在 `Authorization: Bearer …` 头或 `?token=` 查询参数中，两者同时存在时以头为准。
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/` | 手机页面 |
+| `GET` | `/api/auth-info` | 返回 `{ok, pinLength}`，页面据此确定键盘点数 |
+| `POST` | `/api/auth` | `{"pin":"482915"}` → `{ok, token}`；PIN 错误 401；尝试过多 429 并带 `retryAfter` |
+| `GET` | `/api/ping` | 配对有效性检查，有效返回 `{ok:true}` |
+| `POST` | `/api/type` | body `{"text":"…"}` 提交文字，body `{"key":"Return"}` 按回车 |
+| `GET` | `/api/type` | query 形式，`?text=…` 或 `?key=Return`；文本上限 600 字符，超限返回 400 并提示改用 POST |
+| `POST` | `/api/logout` | 取消信任当前设备 |
+| `OPTIONS` | 任意路径 | CORS 预检，返回 204 |
+
+所有响应都带 `Access-Control-Allow-*` 头，允许跨域调用。协议为 HTTP/1.1，连接复用。
+
+```bash
+TOKEN=$(curl -s -X POST http://127.0.0.1:3210/api/auth -H 'Content-Type: application/json' \
+  -d '{"pin":"482915"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+
+curl -sG http://127.0.0.1:3210/api/type --data-urlencode "token=$TOKEN" --data-urlencode "text=你好"
+# {"ok":true,"sentChars":2,"method":"fcitx5","charCount":2,"durationMs":3}
+
+curl -s -X POST http://127.0.0.1:3210/api/type -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"key":"Return"}'
+# {"ok":true,"method":"wtype","key":"Return","durationMs":14}
+
+# 单条链接形式
+curl -sG http://127.0.0.1:3210/api/type --data-urlencode "token=$TOKEN" --data-urlencode "text=粘贴自手机"
+```
+
+失败时服务端返回 500，`error` 字段是具体原因（连不上 addon、addon 拒绝、`wtype` 未安装等）以及对应的处理建议。
+
+## 文件位置
+
+使用 XDG 目录，因此从任意工作目录启动（包括 systemd 用户服务）都不依赖当前目录：
+
+| 内容 | 位置 |
+|------|------|
+| PIN、已配对设备、TLS 证书与私钥 | `$XDG_CONFIG_HOME/remote-input-board/`，默认 `~/.config/…`，新建时权限 0700 |
+| 服务日志、输入历史 | `$XDG_DATA_HOME/remote-input-board/logs/`，默认 `~/.local/share/…` |
+
+磁盘上只保存 token 的 SHA-256，`trusted_devices.json` 内容不包含可用 token；`pin.txt` 与私钥权限 0600。
+
+旧版本将这些文件写在启动目录，首次启动时若新配置目录尚未初始化，会一次性把它们迁移过去，已有 PIN 与配对关系保持不变。
+
+每次成功输入向 `logs/history/YYYY-MM-DD/HH.log` 追加一行 JSON，目录与文件按本地日期和时间命名，`createdAt` 为 UTC。项目本身不做统计，需要汇总可自行扫描这些文件。
+
+服务端不输出 HTTP 访问日志：GET 请求行里包含 token 和文本原文。运行日志只记录 `textLength` 这类元信息。
+
+## 环境变量
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `PORT` | `3210` | HTTP 监听端口 |
+| `HTTPS_PORT` | `PORT+1` | 存在证书时的 TLS 端口 |
+| `PIN_CODE` | — | 覆盖 PIN，必须是纯数字 |
+| `SSL_CERT_FILE` / `SSL_KEY_FILE` | 配置目录的 `cert.pem` / `key.pem` | 设置后覆盖对应默认路径 |
+| `TEXT_INJECTOR_SOCKET` | 见下 | fcitx5-text-injector 的 socket 路径 |
+| `XDG_CONFIG_HOME` / `XDG_DATA_HOME` | `~/.config` / `~/.local/share` | 目录根 |
+| `REMOTE_INPUT_CONFIG_DIR` / `REMOTE_INPUT_DATA_DIR` | — | 优先级最高的目录覆盖 |
+
+未设置 `TEXT_INJECTOR_SOCKET` 时按 addon 的默认规则推导：`$XDG_RUNTIME_DIR/text-injector.sock`，不可用时退到 `/tmp/text-injector-<uid>.sock`。
+
+## Arch Linux 打包
+
+```bash
+cd packaging/arch && makepkg -si
+```
+
+包名 `remote-input-board-git`，VCS 滚动包。`prepare()` 直接从当前工作树复制源文件，不联网 clone，修改后立即可打包，代价是产物包含未提交改动。`check()` 运行单元测试。安装内容：
+
+- `remote-input-board` — 服务命令
+- `remote-input-board-generate-cert` — 证书生成脚本
+- `/usr/lib/systemd/user/remote-input-board.service` — 用户服务，安装后不自动启用
+
+```bash
+systemctl --user enable --now remote-input-board.service
+journalctl --user -fu remote-input-board
+```
+
+`depends` 为 `python` 和 `wtype`。fcitx5-text-injector 不在任何仓库中，写入 depends 会导致依赖无法解析，因此放在 `optdepends`，需自行从它的 PKGBUILD 构建安装。
+
+## 排查
+
+文字无反应时检查注入通道：
 
 ```bash
 ls -la "$XDG_RUNTIME_DIR/text-injector.sock"
 echo '{"type":"ping"}' | socat - UNIX-CONNECT:"$XDG_RUNTIME_DIR/text-injector.sock"
-# {"pong":true}
+# 期望 {"pong":true}
 ```
 
-> 服务进程需要能访问你的图形会话（`WAYLAND_DISPLAY`、`XDG_RUNTIME_DIR`）。在桌面会话里启动，或用 systemd --user 服务，通常都能自动继承。模块若在 fcitx5 配置里改了 socket 路径，用 `TEXT_INJECTOR_SOCKET` 告诉本服务。
+无应答说明 addon 未安装或 fcitx5 未重启，可用 `fcitx5-diagnose` 查看加载状态；两侧 socket 路径不一致时用 `TEXT_INJECTOR_SOCKET` 覆盖。
 
-### Arch Linux 安装（PKGBUILD）
+回车报 wtype not found：`wtype` 只支持 Wayland，X11 会话下的按键分支尚未实现，文字通道不受影响，因为它走 fcitx5，与显示服务器类型无关。
 
-仓库自带滚动打包脚本，一条命令构建并安装：
+手机连不上：确认两侧在同一局域网，检查防火墙是否放行 `PORT`。启动日志列出的地址来自服务对本机 IPv4 的探测，若列表为空说明没有取得全局地址。
+
+## 开发
 
 ```bash
-git clone https://github.com/zhh7ce/remote-input-board.git
-cd remote-input-board/packaging/arch
-makepkg -si
+python3 -m unittest discover -s tests    # 81 个测试，纯标准库，秒级
 ```
 
-安装后得到（遵循 Linux FHS，配置与数据按 XDG 放在用户目录）：
+路由层不依赖 `http.server`，`handle_request()` 接收 method、path、body、query 并返回 `Response`，大部分行为可脱离真实服务器测试。文字通道测试用临时 Unix socket 模拟 addon，不需要 fcitx5。前端测试直接读取 HTML 文本做字符串断言。
 
-| 路径 | 内容 |
-|------|------|
-| `/usr/bin/remote-input-board` | 启动服务（等同 `python3 -m py_remote_input`） |
-| `/usr/bin/remote-input-board-generate-cert` | 生成自签 HTTPS 证书到配置目录 |
-| `/usr/bin/remote-input-board-rebuild-stats` | 从历史重建累计字数 |
-| `/usr/lib/python3.x/site-packages/py_remote_input/` | 程序本体（含页面模板） |
-| `/usr/lib/systemd/user/remote-input-board.service` | 用户服务，`systemctl --user enable --now remote-input-board` 启用 |
+## 限制
 
-依赖 `python` 与 `wtype`（由 pacman 自动安装）。**文字输入还额外需要 fcitx5-text-injector 模块**——它尚未进任何仓库，所以没写进 `depends`（否则本包会装不上），请按上面的步骤单独构建安装。`openssl`、`systemd` 为可选依赖。
+- 回车依赖 `wtype`，仅在 Wayland 会话可用，X11 未实现。
+- 文字输入依赖 fcitx5，其它输入法框架（IBus 等）没有对应后端。
+- 服务端只面向当前焦点输入上下文，发送前需自行确认目标窗口处于聚焦状态。
+- 自签证书需要手动信任。
 
-> **打包取的是本地工作树，不联网**：`PKGBUILD` 的 `source=()` 为空，`prepare()` 直接从仓库根目录（`$startdir/../..`）复制源码，所以在自己的 checkout 里改完代码就能立刻 `makepkg -f`，不必先 push 到 GitHub。代价是打出来的包**包含未提交的改动**——要分享给别人就先 commit（`pkgver()` 报的是当前 HEAD 的 `rN.gHASH`，不会体现未提交内容）。已在 `packaging/arch/` 下留下的旧 GitHub 克隆会在每次 `prepare()` 时被清掉，不会串味。
+## 来源
 
-### 快速开始（源码方式）
-
-纯标准库实现，无需安装依赖，直接跑：
-
-```bash
-python3 -m py_remote_input
-# 或
-uv run python -m py_remote_input
-```
-
-终端会打印手机访问地址和 **PIN 码**：
-
-```
-http://192.168.x.x:3210
-PIN required on first connect: 482915
-```
-
-电脑和手机连同一个 WiFi，手机浏览器打开页面，先在锁屏界面点按数字键输入终端里的 PIN，解锁后才能发送文字。发送前记得在电脑上点一下目标窗口，把光标放好。
-
-页面底部有两个可选项：「回车直接发送（Shift+回车换行）」和「无文字时点发送 = 在电脑上按回车」——后者勾选后，输入框留空点发送就会在电脑上触发一次 Enter（比如用来发送 IM 消息、确认对话框），选择会记住在本手机上。发送失败以底部短暂浮层提示，成功就是把输入框清空。**多行文字原样送出**：换行走的是 fcitx5 文本提交，等同粘贴一个换行字符，**不会替你按下回车**（需要回车就用空发送功能显式触发）。没有连接状态显示——未配对时就是全屏 PIN 锁屏，token 失效会自动回到锁屏。
-
-### PIN 码与设备配对
-
-采用 KDE Connect 式的"配对一次、长期信任"模型，正常使用中**每台手机只需输入一次 PIN**：
-
-- 首次启动会在配置目录（`~/.config/remote-input-board/pin.txt`，权限 600）自动生成 PIN，之后一直复用；终端每次启动都会打印当前 PIN
-- 想自己指定：`PIN_CODE=135790 python3 -m py_remote_input`（纯数字）
-- 手机首次输对 PIN 后拿到随机 token 存在浏览器本地；服务端把设备记到配置目录的 `trusted_devices.json`（只存 token 的 SHA-256，权限 600）。**之后手机 IP 变化（DHCP、私人无线局域网地址）或服务重启都不再要求 PIN**，直到主动取消配对
-- 取消配对：手机页面右上角「锁定」按钮（只取消本机），或删除 `~/.config/remote-input-board/trusted_devices.json`（所有手机重新配对）
-- 安全机制：PIN 常量时间比较；token 为 32 字节随机数，服务端只存哈希；同一 IP 连续输错 5 次 PIN 会被限流（15 秒起指数退避到 5 分钟）。token 与 IP 解绑后持有者即可访问，不可信网络请务必启用 HTTPS
-- HTTP 接口同样严格：携带无效 token 的请求一律 401 拒绝；GET 链接里的 token 与文本不会写入服务端日志（访问日志已整体关闭）
-
-### 配置
-
-| 你想干嘛 | 怎么弄 |
-|---------|-------|
-| 改端口 | `PORT=3219 python3 -m py_remote_input` |
-| 指定 PIN | `PIN_CODE=135790 python3 -m py_remote_input` |
-| 局域网访问 | 确保防火墙放行 TCP 3210（HTTP）和 3211（HTTPS） |
-| 启用 HTTPS | 配置目录放 `cert.pem`+`key.pem`（`remote-input-board-generate-cert` 或 `scripts/generate_cert.sh` 生成）即在 **3211** 端口额外开启 HTTPS，与 3210 的 HTTP 同时可用；可用 `HTTPS_PORT` 改端口、`SSL_CERT_FILE`/`SSL_KEY_FILE` 改证书路径（见下） |
-
-### HTTPS（可选）
-
-证书存在时 **HTTP 和 HTTPS 同时提供**：HTTP 始终在 `PORT`（默认 3210），HTTPS 在 `HTTPS_PORT`（默认 **3211**），两者共用同一套 PIN 和配对信息（在一个地址配对过，另一个也免 PIN）。手机用 `http://IP:3210` 或 `https://IP:3211` 打开都行。明文 HTTP 中 PIN 和输入内容在网络上可见——**不可信网络请用 https 地址并考虑防火墙只放行 3211**。
-
-**方式一：自签证书（适合局域网 IP 访问，零成本）**
-
-一键脚本会自动探测本机局域网 IP 并把它写进证书 SAN（也可手动传 IP），证书生成在配置目录 `~/.config/remote-input-board/`：
-
-```bash
-# 已安装（PKGBUILD）：
-remote-input-board-generate-cert
-# 源码方式：
-scripts/generate_cert.sh
-# 或指定 IP：scripts/generate_cert.sh 192.168.10.172
-```
-
-生成后**正常启动即可，不用设任何环境变量**——启动后会看到日志同时列出 http:// 和 https:// 地址：
-
-```bash
-python3 -m py_remote_input
-# INFO Remote input server is running. HTTP on port 3210. HTTPS on port 3211.
-```
-
-可选环境变量（不设就用括号里的默认值）：
-
-```bash
-HTTPS_PORT=8443 \
-SSL_CERT_FILE=/path/cert.pem SSL_KEY_FILE=/path/key.pem \
-  python3 -m py_remote_input
-# 证书路径语义同 shell 的 ${SSL_CERT_FILE:-<配置目录>/cert.pem}，设了才覆盖默认值
-```
-
-然后用 `https://` + **HTTPS 端口** + 证书里那个 IP 访问（如 `https://192.168.10.172:3211`）。注意：
-
-- 证书只对生成时写入的 IP 有效；用别的 IP 或主机名访问仍会报警告，换网络/IP 后重新跑一次脚本即可
-- 手机首次打开会有红色证书警告，这是自签证书的正常现象：
-  - **安卓 Chrome / Edge**：「高级 → 继续前往（不安全）」，点一次后页面即放行
-  - **iPhone Safari**：「显示详细信息 → 访问此网站」
-  - **安卓 Firefox** 用的是自带证书库，个别版本不给"继续"入口，建议直接换 Chrome
-- 想彻底消除警告（不是点"继续"而是真信任）：把 `cert.pem` 传到手机安装——安卓在「设置 → 安全 → 加密与凭据 → 安装证书 → CA 证书」；iOS 安装描述文件后还要到「设置 → 通用 → 关于本机 → 证书信任设置」里启用
-- 默认路径/环境变量只找到一个文件（有 cert 没 key，或反过来）时服务会直接报错并指出缺哪个
-- 常见误区：启动日志只有 `HTTP on port 3210.` 没有 `HTTPS on port 3211.`，说明配置目录没有 `cert.pem`/`key.pem`，此时访问 3211 会连接失败——跑一次 `remote-input-board-generate-cert` 再重启即可
-- 注意协议和端口要配对：3210 只说 HTTP（用 https:// 访问会报错），3211 只说 HTTPS（用 http:// 访问会报错）
-
-**方式二：受信任证书（需要域名）**
-
-如果你有域名指向这台机器，可以用 Caddy 自动签发 Let's Encrypt 证书并反代到 3210，或用 certbot 拿到证书后同样通过 `SSL_CERT_FILE`/`SSL_KEY_FILE` 加载。纯内网 IP 无法申请公网受信任证书。
-
-### 文件位置（XDG 目录）
-
-从任意目录启动都可以，运行时文件不再写在工作目录（旧版本放在工作目录的文件会在首次启动时**自动迁移一次**）：
-
-| 文件 | 位置 | 内容 |
-|------|------|------|
-| `pin.txt` | `~/.config/remote-input-board/`（700 目录、600 文件） | 自动生成的 PIN（也可用 `PIN_CODE` 覆盖而不生成文件） |
-| `trusted_devices.json` | 同上 | 已配对设备（只存 token 的 SHA-256，600；删除即全部重新配对） |
-| `cert.pem` / `key.pem` | 同上 | HTTPS 证书（可选） |
-| `logs/server.log` | `~/.local/share/remote-input-board/logs/` | 服务日志 |
-| `logs/history/YYYY-MM-DD/HH.log` | 同上 | 发送历史，按天+小时分文件，一行一条 JSON（`kind=text` 为文字、`kind=key` 为按键） |
-| `logs/stats.json` | 同上 | 累计字数备份（只统计文字，按键不计字；内存缓存约 5 分钟落盘） |
-
-目录遵循 XDG：设置了 `XDG_CONFIG_HOME`/`XDG_DATA_HOME` 时随之变化；也可用 `REMOTE_INPUT_CONFIG_DIR`、`REMOTE_INPUT_DATA_DIR` 单独覆盖。
-
-### 实现说明
-
-- 除页面和 `/api/auth` 外，所有 HTTP 接口都要带 token；token 由 `POST /api/auth` 用 PIN 换取，持久有效、不绑 IP，`POST /api/logout` 可注销本机。token 携带方式两种等价：`Authorization: Bearer <token>` 头，或 URL 查询参数 `?token=<token>`
-- 发送走无状态的 HTTP 请求，没有 WebSocket/长连接：
-  - `POST /api/type`，body `{"text":"..."}`（页面内部用法，长度不限）
-  - `GET /api/type?token=...&text=...`（**链接直发**：token 和文本全在链接里，适合快捷指令/书签/curl；限 600 字，换行用 `%0A`）
-  - `GET /api/type?token=...&key=Return`（触发回车）
-  - `GET /api/ping?token=...`（校验配对状态）
-- 打开 `http://IP:3210/?token=<token>` 可**跳过 PIN 直接配对**（页面把 token 存入浏览器后自动从地址栏抹掉）；把这条链接发给新手机即完成授权
-- 空发送回车：HTTP body `{"key":"Return"}`；服务端有按键白名单（当前仅 `Return`），非白名单返回 400。历史中记为 `{"kind":"key","key":"Return"}`，不计入累计字数
-- 服务端通过 Unix socket 让 fcitx5-text-injector 执行 `commit`，把文本作为成品文字提交给焦点应用，**因此不受输入法干扰**。**换行符原样提交**：`commitString()` 交出去的是字符而不是按键事件，所以多行内容等同粘贴，不会提前触发提交/执行。需要回车时用空发送回车功能，它才会真的走 `wtype -k Return`
-- 提交前只做一处归一：CRLF 和裸 CR 统一转成 LF（裸 CR 进了文本框在多数应用里显示成乱码）
-- 单行输入框（如搜索栏）本身不接多行，收到带换行的提交时各应用表现不一——这属于目标应用的既有行为，本服务不改写内容
-- 回车走 wtype 而非 fcitx5：`commitString()` 只能交文本，产生不了真实按键事件
-- socket 连不上（模块没装、fcitx5 没开）或 wtype 未安装时，接口返回明确的错误提示，手机页面可见
-- 长文本一次性通过 socket 发送，不受命令行长度限制（这是相对 wtype 打字的一个额外好处）
-
-### 技术栈
-
-`Python 标准库（http.server）` `fcitx5-text-injector（Unix socket）` `wtype（仅回车）` `原生 JS（无框架）`
+早期版本是 Windows 实现，包含鼠标触摸板、快捷指令、剪贴板粘贴模式。移植到 Linux 时按最小可用范围裁剪，只保留文字输入主线，上述 Windows 专属功能未一并迁移。

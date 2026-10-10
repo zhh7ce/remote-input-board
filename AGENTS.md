@@ -1,104 +1,163 @@
-# AGENTS.md
+# AGENTS.md — remote-input-board
 
-## 项目简介
+本文档面向在本仓库工作的 coding agent。内容以当前代码为准，改动行为时同步更新本文档。
 
-远程输入板（Linux 版） — 用手机浏览器作为 Linux 电脑的远程文本输入面板。当前为精简版，核心是**文字发送**：手机网页发送文字，电脑端通过 **fcitx5-text-injector** 模块（Unix socket → fcitx5 `commitString()`）提交到当前光标处。选它而非 wtype/ydotool 的原因：后两者模拟按键事件，会被中文输入法拦截重组，导致输入乱掉；`commitString()` 直接交成品文字，**输入法开着也正常**。通信为**无状态纯 HTTP，无 WebSocket 长连接**：token 与文本可同置一条链接（`GET /api/type?token=...&text=...`），也可 Bearer 头 + POST body。另有可选的**空发送回车**：前端复选框控制（localStorage `remoteInput.enterWhenEmpty`），勾选后输入框为空点发送即按一次 Enter——回车必须是真实按键，`commitString()` 产生不了，所以**这一条仍走 `wtype -k Return`**。
+## 概述
 
-- **服务端口**: 3210（HTTP）/ 3211（HTTPS）
-- **Python 包**: `py_remote_input`（纯标准库，无第三方运行时依赖）
-- **入口**: 源码 `python3 -m py_remote_input`（或 `uv run ...`）；安装后为命令 `remote-input-board`（pyproject `[project.scripts]`）
-- **系统依赖**: `fcitx5` + **fcitx5-text-injector** addon（文字输入，需单独构建安装并重启 fcitx5）、`wtype`（仅远程回车，Arch: pacman；Debian: apt）；运行在 Wayland 会话中，需要能访问 `WAYLAND_DISPLAY` / `XDG_RUNTIME_DIR`
-- **注入 socket 路径**: 由 fcitx5 模块自己创建，默认 `$XDG_RUNTIME_DIR/text-injector.sock`（无 `XDG_RUNTIME_DIR` 时回落 `/tmp/text-injector-<uid>.sock`）。本服务用 `injector_socket_path()` 镜像同一套规则，`TEXT_INJECTOR_SOCKET` 可覆盖（对应模块配置项 `SocketPath`）
-- **访问控制**: KDE Connect 式配对。手机首次过 PIN 锁屏（纯点按数字键盘）后获得持久 token，服务端把设备哈希记入配置目录 `trusted_devices.json`，之后 IP 变化/重启都免 PIN，直到 `/api/logout` 或删除该文件。PIN 来自 `PIN_CODE` 环境变量，否则读配置目录 `pin.txt`，再没有就自动生成 6 位数字（0600）并打印到启动日志
-- **文件布局（XDG）**: 配置（pin.txt / trusted_devices.json / cert.pem / key.pem）在 `$XDG_CONFIG_HOME/remote-input-board`（默认 `~/.config/...`，目录 0700）；数据（logs/ 含 server.log、history、stats.json）在 `$XDG_DATA_HOME/remote-input-board`（默认 `~/.local/share/...`）。`REMOTE_INPUT_CONFIG_DIR` / `REMOTE_INPUT_DATA_DIR` 可覆盖。路径逻辑集中在 `py_remote_input/paths.py`，`serve()` 启动时先 `ensure_app_dirs()` 再 `migrate_legacy_files()`（旧 CWD 文件仅迁移一次）
-- **Arch 打包**: `packaging/arch/PKGBUILD`（`remote-input-board-git`，`source=()` + 从 `$startdir/../..` 即**当前工作树**复制源，不再 clone GitHub，同 fcitx5-text-injector 的做法；PEP517 wheel + installer）；`packaging/systemd/remote-input-board.service` 装到 `/usr/lib/systemd/user/`；scripts/ 两个脚本装为 `/usr/bin/remote-input-board-generate-cert`、`/usr/bin/remote-input-board-rebuild-stats`
+手机浏览器作为 Linux 电脑的远程文字输入板。电脑端是纯标准库的 Python HTTP 服务，手机发送文字，服务端把它提交到当前焦点应用的光标处。
 
-开机自启动由随包安装的 user unit 提供（不默认启用）：`systemctl --user enable --now remote-input-board.service`。
+输入分两条通道，代码结构围绕这一点展开：文字经 Unix socket 交给 [fcitx5-text-injector](../fcitx5-text-injector)（fcitx5 addon），由它调用 `commitString()` 提交文本；回车走 `wtype -k Return`，是项目中唯一的按键模拟。新增按键能力应加到按键通道，文字通道不承担按键事件。
 
----
+通信是无状态 HTTP，不使用 WebSocket。token 与内容位于同一请求（`GET /api/type?token=…&text=…`）。早期 Windows 版的鼠标触摸板、快捷指令、剪贴板模式等功能未移植。
 
 ## 运行与验证
 
 ```bash
-# 启动（配置在 ~/.config/remote-input-board，数据在 ~/.local/share/remote-input-board）
-python3 -m py_remote_input
-# Arch 安装后：remote-input-board，或 systemctl --user enable --now remote-input-board
+python3 -m py_remote_input                 # 启动，PORT 默认 3210
+python3 -m unittest discover -s tests      # 81 个测试，纯标准库 unittest，秒级
+```
 
-# 测试
-python3 -m unittest discover -s tests
+端到端手测，PIN 在启动日志中：
 
-# 验证接口（/api/* 除 auth 外都要 Bearer token）
-curl -s http://127.0.0.1:3210/api/auth-info
+```bash
 TOKEN=$(curl -s -X POST http://127.0.0.1:3210/api/auth -H 'Content-Type: application/json' \
-  -d '{"pin":"<启动日志里的PIN>"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
-curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:3210/api/stats
-curl -s -X POST http://127.0.0.1:3210/api/type -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' -d '{"text":"你好"}'
-# 空发送回车（等价前端勾选复选框后的行为）：
+  -d '{"pin":"<日志里的 PIN>"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+curl -sG http://127.0.0.1:3210/api/type --data-urlencode "token=$TOKEN" --data-urlencode "text=你好"
 curl -s -X POST http://127.0.0.1:3210/api/type -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -d '{"key":"Return"}'
-# 链接直发（token 与文本全在 URL 里，适合快捷指令/书签）：
-curl -sG http://127.0.0.1:3210/api/type --data-urlencode "token=$TOKEN" --data-urlencode "text=你好"
-# 校验配对：
-curl -s "http://127.0.0.1:3210/api/ping?token=$TOKEN"
+```
 
-# 排查文字通道：确认 fcitx5-text-injector 的 socket 在并应答
+单独验证文字通道，确认 addon 的 socket 存在并应答：
+
+```bash
 ls -la "$XDG_RUNTIME_DIR/text-injector.sock"
 echo '{"type":"ping"}' | socat - UNIX-CONNECT:"$XDG_RUNTIME_DIR/text-injector.sock"   # {"pong":true}
 ```
 
-## 关键文件说明
+## 代码结构
 
-| 文件 | 作用 |
+包名 `py_remote_input`，入口 `__main__:main` → `server.serve()`。无第三方运行时依赖，`pyproject.toml` 的 `dependencies` 保持为空。
+
+| 文件 | 职责 |
 |------|------|
-| `py_remote_input/templates/index.html` | 前端页面（单文件，极简：输入框 + 发送 + 选项 + 本地记录；无状态条/累计字数 UI/WebSocket——未配对由全屏锁屏承担，token 失效 401 自动回锁屏；发送失败走底部 toast，成功以清空输入框为反馈。textarea 的内容**原样发送**，多行不再被改写） |
-| `py_remote_input/server.py` | HTTP 服务入口（`build_handler` 注入 `type_text` 与 `press_key`，解析 query 传给路由；`serve()` 组装 XDG 路径、迁移、日志、双端口；`log_message` 整体静默，防止 URL 里的 token/文本进日志） |
-| `py_remote_input/paths.py` | XDG 路径：`config_dir()`/`data_dir()`/`ensure_app_dirs()`/`migrate_legacy_files()`；覆盖变量 `REMOTE_INPUT_CONFIG_DIR`/`REMOTE_INPUT_DATA_DIR` |
-| `py_remote_input/web.py` | HTTP 路由 + 请求处理（auth / type / key / ping / stats）；token 接受 `Authorization: Bearer` 头或 `?token=` 查询参数；`ALLOWED_REMOTE_KEYS={"Return"}` 为远程按键白名单；`MAX_GET_TEXT_CHARS=600` 限制 URL 直发长度 |
-| `py_remote_input/auth.py` | PIN 加载与限流；trusted-device 配对：32 字节随机 token、服务端只存 SHA-256、落盘 `trusted_devices.json`（0600）、**不绑 IP、重启不失效**、`revoke()` 取消配对 |
-| `py_remote_input/typer.py` | 输入通道，**两条**：`type_text(text)` 连 `text-injector.sock` 发 `{"type":"commit","text":...}` 由 fcitx5 提交，**换行原样保留**（`commitString()` 交的是字符而非按键事件，所以多行等同粘贴、不会替你按回车；`normalize_line_endings()` 只把 CRLF/裸 CR 归一成 LF）；`press_key(keysym)` 按 `ALLOWED_KEYSYMS` 白名单校验后执行 `wtype -k <keysym>`（回车必须是真实按键，`commitString()` 给不了），`press_return()` 为其便捷封装。异常：`TextInjectorUnavailableError`（socket 连不上）、`TextInjectorError`（模块回 `success:false`）、`WtypeNotFoundError` |
-| `py_remote_input/stats.py` | 字数统计存储 |
-| `py_remote_input/logger.py` | 日志（同时输出 stdout 和文件） |
-| `scripts/rebuild_stats.py` | 从 history 重建 stats.json（默认读写 data 目录；安装后为 `/usr/bin/remote-input-board-rebuild-stats`） |
-| `scripts/generate_cert.sh` | 生成自签证书到配置目录（安装后为 `/usr/bin/remote-input-board-generate-cert`） |
-| `packaging/arch/PKGBUILD` | Arch VCS 包（`remote-input-board-git`）：`source=()`，源由 `prepare()` 从 `$_repo="$startdir/../.."`（本仓库根目录）复制，**不联网 clone**；`pkgver()` 仍读本地 git 出 `rN.gHASH`。PEP517 build wheel + installer 入包、check() 跑 unittest。`depends` 只有 `python`/`wtype`——fcitx5-text-injector 未进任何仓库，写进 depends 会让本包装不上，故列为 `optdepends` 并在注释里说明必须单独构建。注意：打的是**当前工作树**（含未提交改动），对外分享前先 commit |
-| `packaging/systemd/remote-input-board.service` | systemd --user 单元，入包 `/usr/lib/systemd/user/`，不默认 enable |
-| `~/.config/remote-input-board/pin.txt` | 自动生成的 PIN（配置目录 0700，文件 0600） |
-| `~/.config/remote-input-board/trusted_devices.json` | 已配对设备列表（仅 token 的 SHA-256 + 时间/最近 IP，0600；删除即全部重新配对） |
-| `~/.local/share/remote-input-board/logs/server.log` | 服务日志 |
-| `~/.local/share/remote-input-board/logs/stats.json` | 累计字数备份（手机上报，内存缓存约 5 分钟落盘） |
-| `~/.local/share/remote-input-board/logs/history/YYYY-MM-DD/HH.log` | 输入历史，按天+小时分文件，一行一条 JSON（`{"kind":"text",...}` / `{"kind":"key","key":"Return"}`；只有 text 计字数） |
+| `server.py` | 组装层：`serve()` 解析环境变量、创建 XDG 目录、迁移旧文件、加载 PIN、启动双端口（HTTP 与可选 HTTPS）、注册信号并优雅退出；`build_handler()` 生成 `BaseHTTPRequestHandler` 子类；`build_history_recorder()` 生成历史写入闭包 |
+| `web.py` | 路由层：`handle_request(method, path, body, type_text, logger, *, press_key, record_history, auth, client_ip, token, query)` 返回 `Response(status_code, content_type, body)`。不依赖 `http.server`，可脱离真实服务器单测 |
+| `typer.py` | 两条输入通道：`type_text()` 走 Unix socket + fcitx5 commit，`press_key()` 走 `wtype -k`。异常类型定义在此 |
+| `auth.py` | `load_pin()`（`PIN_CODE` → `pin.txt` → 生成 6 位）；`AuthStore`：PIN 校验、限流、持久 trusted-device 表 |
+| `paths.py` | XDG 路径与旧文件迁移：`config_dir()`、`data_dir()`、`ensure_app_dirs()`、`migrate_legacy_files()` |
+| `logger.py` | `Logger`：同时输出到 stdout 和 `logs/server.log`，UTC ISO 时间戳，meta 序列化为 JSON |
+| `templates/index.html` | 前端单文件（590 行）：PIN 数字键盘锁屏、输入框、两个选项、本地发送记录。原生 JS，无框架、无构建 |
 
-## 通信协议
+测试分布：`test_web.py` 路由与鉴权闸门，`test_typer.py` socket 路径、注入协议、wtype 调用，`test_auth.py` 鉴权与限流，`test_paths.py` 目录与迁移，`test_server.py` 历史录制，`test_frontend.py` 读取 HTML 文本做字符串断言。
 
-- `GET /`：手机页面（含锁屏，无需鉴权）
-- `GET /api/auth-info`：公开，返回 `{"pinLength": 6}`
-- `POST /api/auth`：公开，`{"pin": "..."}` 换 `{"token": "..."}`；token 为持久 trusted-device 凭证，**不绑 IP**，服务端只存其 SHA-256；错误 PIN 返回 401，触发限流返回 429 + `retryAfter`
-- `POST /api/logout`：携带有效 token（Bearer 头或 `?token=`），注销（取消配对）当前设备
-- `GET /api/stats`、`GET|POST /api/type`、`GET /api/ping`：必须带 token——`Authorization: Bearer <token>` 头或 URL `?token=<token>` 查询参数（等价，头优先），否则 401 + `authRequired`
-- `POST /api/type` body 两种：`{"text":"..."}`（空文本 400，成功回含 `sentChars`/`totalChars`）或 `{"key":"Return"}`（单键，成功回 `{"ok":true,"key":"Return",...}`，无 totalChars；非白名单按键 400 `Unsupported key.`）
-- `GET /api/type`：token/text/key 全在查询串；`key=Return` 优先于 `text`；text 上限 `MAX_GET_TEXT_CHARS=600`（超长 400 提示改 POST）；两者都没有 400
-- `GET /api/ping`：配对状态探针，有效 token 回 `{"ok":true}`，用于页面启动时校验
-- `GET /?token=<token>`：页面读取后存入 localStorage 并用 `history.replaceState` 抹掉地址栏——把带 token 的链接发给新设备即可免 PIN 配对（**链接含凭证，勿外发**）
-- 无 WebSocket：发送全部是无状态 HTTP 请求；`log_message` 整体静默，token 与文本不会进访问日志
-- Handler 保持 `protocol_version = "HTTP/1.1"`：启用 keep-alive，重复发送复用连接
-- 配对状态由 `AuthStore` 持久化在配置目录 `trusted_devices.json`：重启不失效，IP 变化不失效；删除该文件或调用 logout 才需要重新输 PIN
+改动落点：接口与路由行为在 `web.py`，注入方式与按键能力在 `typer.py`，鉴权与限流在 `auth.py`，文件位置在 `paths.py`，端口与生命周期在 `server.py`，页面在 `templates/index.html`。
 
-## HTTPS（可选，与 HTTP 同时监听）
+## 路由与鉴权
 
-- **双端口模型**（见 `server.create_servers`）：HTTP 始终监听 `PORT`（默认 3210）；配置目录存在 cert/key 时，**额外**在 `HTTPS_PORT`（默认 `PORT+1`，即 3211）起一个 TLS server。两个 server 共用同一个 handler（PIN/配对/统计/历史完全互通，一个端口配对后另一个也免 PIN）。无证书→只有 HTTP；`HTTPS_PORT==PORT`（非 0）启动报错
-- 证书路径解析见 `server.resolve_tls_files`，语义同 shell `: "${SSL_CERT_FILE:=<config>/cert.pem}"`：**默认读配置目录的 `cert.pem`/`key.pem`，环境变量设了才覆盖**；只找到一个文件→启动报错并指出缺哪个
-- 自签证书用 `scripts/generate_cert.sh`（安装后 `remote-input-board-generate-cert`）生成（自动探测局域网 IP 写入 SAN，输出到配置目录 cert.pem/key.pem）；底层等价于 `openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 3650 -subj "/CN=remote-input" -addext "subjectAltName=IP:<LAN-IP>"`
-- 排查：启动日志 `HTTP on port X. HTTPS on port Y.` 两行都有才是双协议；只有 HTTP 行说明没找到 cert/key。协议与端口严格配对（3210 只说 HTTP，3211 只说 HTTPS）
-- 前端无需改动：所有发送都是同源相对路径 HTTP 请求，HTTP/HTTPS 自动跟随页面协议
-- 环境变量一览：`PORT`、`HTTPS_PORT`（不设则 PORT+1）、`PIN_CODE`（纯数字；不设则读/生成配置目录 `pin.txt`）、`SSL_CERT_FILE`、`SSL_KEY_FILE`（不设则默认配置目录下同名文件）、`XDG_CONFIG_HOME`/`XDG_DATA_HOME`、`REMOTE_INPUT_CONFIG_DIR`/`REMOTE_INPUT_DATA_DIR`（最高优先级的目录覆盖）
-- 从任意目录启动均可；旧版本写在 CWD 的 pin.txt/trusted_devices.json/cert/key/logs 首次启动时自动迁移到 XDG 目录（仅当新配置目录未初始化，且不覆盖已有文件）
-- 无证书（HTTP-only）时启动日志打 WARN：PIN 在网络上可见，不可信网络应生成证书并用 https 端口
+| 方法 路径 | 鉴权 | 行为 |
+|---|---|---|
+| `GET /` | 公开 | 返回 `HTML_PAGE`，模板在模块导入时读取一次 |
+| `GET /api/auth-info` | 公开 | `{ok, pinLength}` |
+| `POST /api/auth` | 公开 | PIN 错误 401；`RateLimited` 429 附 `retryAfter`；成功 `{ok, token}` |
+| `POST /api/logout` | 在闸门之前处理 | 撤销请求自带 token，固定返回 200 `{ok:true}` |
+| `GET /api/ping` | 需要 token | 配对有效性检查，`{ok:true}` |
+| `GET /api/type` | 需要 token | query 中 `key=` 走按键、`text=` 走文字，两者都无返回 400 |
+| `POST /api/type` | 需要 token | body 中 `key` 优先于 `text` |
+| `OPTIONS *` | 无 | 204 + CORS 头 |
+| 其它路径 | 需要 token | 无 token 先 401，有 token 返回 404 |
 
-## 注意事项
+`web.PUBLIC_ROUTES` 只包含 `GET /`、`GET /api/auth-info`、`POST /api/auth`。`/api/logout` 不在该集合内，但在 `handle_request` 中位于鉴权闸门之前返回，因此无效 token 调用它同样得到 200：撤销只针对请求自带的 token，无 token 时无副作用。调整这段顺序前需确认该语义。
 
-- **文字输入需要 fcitx5**：焦点应用必须正使用 fcitx5 输入法。没有 fcitx5、或模块未加载时 socket 不存在，`type_text` 抛 `TextInjectorUnavailableError`（HTTP 层转成 500，手机页面可见）
-- **回车仍依赖 wtype（Wayland-only）**：X11 会话要改用 xdotool/ydotool 发 Return，目前未实现
-- 两条通道都向**当前焦点窗口**输入，发送前需在电脑上点好目标输入位置
-- 需确保防火墙允许局域网访问 TCP 3210（HTTP）；启用 HTTPS 后还要放行 3211（或自定义的 `HTTPS_PORT`）
-- 页面被前端强缓存时可能需要强制刷新
+`auth` 参数为 `None` 时跳过闸门，测试借此绕开鉴权；生产路径始终传入 `AuthStore`。
+
+## 需要遵守的约定
+
+### 前端统一使用 `POST /api/type?token=…`
+
+前端把 token 拼在查询参数里（`sendRequest()`），body 为 JSON。`server._bearer_token()` 支持 `Authorization: Bearer`，`handle_request` 中取值顺序为 `token or params.get("token")`，头优先于 query，无效 query token 不会覆盖有效头令牌（`test_bearer_takes_precedence_over_query_token`）。新增前端请求沿用 query 形式。
+
+### 远程按键白名单有两处
+
+`web.ALLOWED_REMOTE_KEYS`（HTTP 层，非白名单返回 400 `Unsupported key.`）与 `typer.ALLOWED_KEYSYMS`（执行层，抛 `ValueError`），当前均为 `{Return}`。来自网络请求的 keysym 不允许直接传给 `wtype`，新增按键必须同时加入两处。
+
+### 不记录 HTTP 访问日志
+
+`RequestHandler.log_message` 直接 `return`。GET 请求行包含 token 与用户输入原文，任何增加请求级日志的改动都会把凭证或用户文本写进 `server.log`。需要记录时只记元信息，参考 `_handle_type_text` 中的 `{"textLength": …}`。
+
+### token 与 IP 无关，服务端只存哈希
+
+`AuthStore.validate()` 不校验 IP，因为局域网地址会因 DHCP、iOS/Android 私有 WiFi 地址而变动。持久化的是 `secrets.token_urlsafe(32)` 的 SHA-256。新增鉴权设计保持 IP 无关。限流按 IP 统计：10 分钟窗口内 5 次失败进入指数退避（基准 15s，上限 5min），一次成功即清除该 IP 的失败记录。
+
+trusted-device 的 `lastUsedAt`/`lastIp` 更新按 60 秒节流落盘（`USAGE_FLUSH_INTERVAL_SECONDS`）；`authenticate`、`revoke` 强制落盘，`serve()` 退出时调用 `auth.flush()`。写盘使用 `.tmp` 加 `replace` 原子替换，权限 0600。
+
+### 历史写入路径
+
+`server.build_history_recorder(log_dir)` 返回 `record_history(item)` 闭包，向 `logs/history/YYYY-MM-DD/HH.log` 追加。目录与文件名按本地日期与小时，`createdAt` 为 UTC ISO，一行一条 JSON。`kind` 只有 `text` 和 `key` 两种。仅在注入成功后写入。测试见 `tests/test_server.py`。
+
+### 换行原样提交
+
+`typer.normalize_line_endings()` 只把 CRLF 与裸 CR 归一为 LF，其余不改动。`commitString()` 提交的是字符而非按键事件，多行内容等同粘贴，不会触发回车。这是设计行为（提交由用户显式触发），不要把换行折叠成空格或自动补回车。
+
+### 异常统一转 500 并回传消息
+
+`_handle_type_text` 与 `_handle_type_key` 用 `except Exception` 兜底，返回 `json_response(500, {"error": str(exc)})`。手机端需要看到"未安装 addon""wtype 找不到"这类可执行提示，文案定义在 `typer.py` 的异常消息中。
+
+### 前端测试基于字符串断言
+
+`tests/test_frontend.py` 读取 HTML 文本，断言控件 id、`sendRequest({ text: … })` 形状，并包含负向断言（不应出现 `new WebSocket`、`totalChars`、`累计`、`/api/stats`、`trackpad`、`/api/paste`、`已配对` 等）。这些负向断言对应本 UI 已明确移除的内容，重构前端时不要为了让测试通过而恢复它们。
+
+前端其他约束：锁屏只用页内数字键盘，不放 `<input>`，避免弹出系统键盘（`test_pin_lock_screen_uses_on_screen_keypad_without_text_input`）；localStorage 键为 `remoteInput.token`、`.history`、`.sendOnEnter`、`.enterWhenEmpty`，记录上限 20 条；收到 401 清除 token 并回到锁屏；`?token=` 打开即配对，随后用 `history.replaceState` 从地址栏移除。
+
+### GET 文本长度上限
+
+`web.MAX_GET_TEXT_CHARS = 600`，只作用于 `GET /api/type` 的 query 文本（percent-encoding 后中文膨胀 3–9 倍，该上限保证 URL 不超过常见代理与浏览器限制）。POST body 无此限制，超限返回 400 并提示改用 POST。
+
+## 端口、TLS 与生命周期（server.py）
+
+- `create_servers()`：HTTP 始终监听 `PORT`；配置目录中 cert 与 key 同时存在时，额外在 `HTTPS_PORT`（默认 `PORT+1`）启动 TLS server。两者共用同一个 handler 类，PIN、配对、历史互通。
+- 只存在其中一个文件时 `tls_status()` 抛 `RuntimeError` 并指出缺失项；`HTTPS_PORT == PORT`（非 0）同样抛错。无证书时只跑 HTTP，并记录一条 WARN 说明 PIN 与文本在网络上可见。
+- 两个 server 均设置 `daemon_threads = True`，`serve_forever` 各自跑在 daemon 线程中。
+- `SIGINT` 与 `SIGTERM` 共用 `_request_stop` → `stop_event` → `finally` 中 `shutdown()`、`server_close()`、`auth.flush()`。新增信号处理需保留优雅退出。
+- `serve()` 中 `migrate_legacy_files()` 必须在 Logger 写入 `logs/` 之前调用，否则旧的整个 `logs/` 目录无法迁移。
+- `get_local_addresses()` 只列出非 `127.` 开头的 IPv4，通过 `socket.gethostname()` 解析，失败时静默返回空列表。
+- `resolve_tls_files()` 语义等同 shell 的 `${SSL_CERT_FILE:-<配置目录>/cert.pem}`，设置后才覆盖默认路径。
+
+## 对接 fcitx5-text-injector
+
+注入侧 socket 协议（一连接一请求：发送 JSON、`shutdown(SHUT_WR)`、读到 EOF 取得响应，未知 type 返回 `success:false`）与线程约束（fcitx5 API 只能在主事件循环线程调用，IPC 线程必须经 `event_dispatcher_.schedule()`）记录在 `../fcitx5-text-injector/AGENTS.md`，修改协议前先读该文档。模块侧收发超时各 2 秒，本客户端 `SOCKET_TIMEOUT_SECONDS = 5`。
+
+`typer.injector_socket_path()` 镜像 addon 的默认路径规则：`TEXT_INJECTOR_SOCKET` → `$XDG_RUNTIME_DIR/text-injector.sock`（要求以 `/` 开头）→ `/tmp/text-injector-<uid>.sock`。模块侧对应配置项为 `SocketPath`，两侧不一致时用 `TEXT_INJECTOR_SOCKET` 覆盖。
+
+异常分层，HTTP 层统一转为 500 并把消息回给手机端：`TextInjectorUnavailableError`（socket 连不上或无应答，文案引导安装 addon 或设置 `TEXT_INJECTOR_SOCKET`）、`TextInjectorError`（模块返回 `success:false` 或响应无法解析）、`WtypeNotFoundError`。
+
+`type_text()` 成功返回 `{method:"fcitx5", charCount, durationMs}`，`press_key()` 返回 `{method:"wtype", key, durationMs}`，`web` 层再补 `ok` 与 `sentChars`。
+
+`test_typer.py` 用真实临时 Unix socket 模拟 addon（`_serve_once()`），断言收到的 JSON 与半关闭语义，是协议改动的主要回归覆盖。
+
+## 已知问题
+
+- X11 会话下回车不可用：`wtype` 仅支持 Wayland，xdotool/ydotool 分支尚未实现。文字通道不受影响，fcitx5 与显示服务器类型无关。
+- `packaging/arch/{pkg,src,remote-input-board/,*.pkg.tar.zst}` 是 makepkg 产物，已在 `.gitignore` 中。`prepare()` 每次清空 `src/`，`remote-input-board/` 目录是早期从 GitHub clone 留下的裸仓库，现已不再使用。
+- 焦点由使用者负责：服务端只把文字交给 `lastFocusedInputContext()`，没有固定目标窗口的概念。
+
+## 已移除的功能
+
+以下内容由较大范围实现回退而来，恢复前先确认原因已经解决：
+
+- 累计字数统计：`stats.py`（`TextStatsStore`、`count_text_history_chars`）、`GET /api/stats`、`/api/type` 响应中的 `totalChars`、`scripts/rebuild_stats.py` 均已删除。原实现只在启动时扫描历史、运行期间不自增，前端也已不显示。`tests/test_web.py::test_stats_endpoint_is_gone` 要求 `/api/stats` 返回 404。历史文件仍在写入（`kind=text` 那条含原文），需要统计可直接扫描历史。
+- WebSocket 实时通道：`websocket.py` 与 `/ws` 已删除，改为无状态 HTTP。
+- Windows 版功能：`img/`（触摸板等截图）与 `docs/plans/`（两份 Win32 剪贴板方案文档）随功能一并删除。`/api/paste`、`/api/key`、`/api/mouse`、snippet、配对状态栏均不存在。
+
+## 提交前
+
+修改代码后先 bump `pyproject.toml` 的 `version` 并运行 `uv lock`，再 commit。PKGBUILD 的 `pkgver` 是 git 派生的 `rN.gHASH`，不手动修改。不要自动 `git push`。
+
+## 打包与部署
+
+- `packaging/arch/PKGBUILD`：包名 `remote-input-board-git`，VCS 滚动包。`source=()` 为空，`prepare()` 从 `$startdir/../..`（当前工作树）复制源，不联网 clone，修改后可直接 `makepkg -f`，代价是产物含未提交改动。`check()` 运行 unittest；使用 PEP517 构建 wheel，`python -m installer` 安装。`depends` 只有 `python` 与 `wtype`；fcitx5-text-injector 不在任何仓库中，写入 depends 会导致安装失败，因此放在 `optdepends`。
+- `packaging/systemd/remote-input-board.service`：安装到 `/usr/lib/systemd/user/`，不默认启用，由用户执行 `systemctl --user enable --now`。
+- `scripts/generate_cert.sh`：安装为 `/usr/bin/remote-input-board-generate-cert`，探测全局 IPv4 写入 SAN，输出 cert/key 到配置目录（`OUT_DIR` 可改目标，也可显式传 IP）。这是 `scripts/` 下唯一的脚本，PKGBUILD 的 `package()` 只安装它。
+
+## 环境变量
+
+`PORT`、`HTTPS_PORT`、`PIN_CODE`、`SSL_CERT_FILE`、`SSL_KEY_FILE`、`TEXT_INJECTOR_SOCKET`、`XDG_CONFIG_HOME`、`XDG_DATA_HOME`、`REMOTE_INPUT_CONFIG_DIR`、`REMOTE_INPUT_DATA_DIR`（后两个优先级最高）。
