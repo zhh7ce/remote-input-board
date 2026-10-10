@@ -14,20 +14,22 @@
 #   data:    ~/.local/share/remote-input-board  (logs, history)
 pkgname=remote-input-board-git
 _pkgname=remote-input-board
-pkgver=r55.gb0fb227
+pkgver=r59.g49f4b71
 pkgrel=1
-pkgdesc="Use a phone browser as a remote text input panel for Linux (text via fcitx5-text-injector, Enter via wtype)"
+pkgdesc="Use a phone browser as a remote text input panel for Linux (text via fcitx5-text-injector, keys via ydotool or wtype)"
 arch=('any')
 url="https://github.com/zhh7ce/${_pkgname}"
 license=('custom')
-# Text input needs the fcitx5-text-injector addon running inside fcitx5. It is
-# not in any repository yet, so it is deliberately not in depends (installing
-# this package would fail): build it from its own PKGBUILD and install it, then
-# restart fcitx5. wtype stays a hard dependency because remote Enter needs a
-# real key event, which commitString() cannot produce.
-depends=('python' 'wtype')
+# Text input needs the fcitx5-text-injector addon running inside fcitx5, and key
+# input needs one of the two keystroke simulators. None of them is required to
+# start the server, so they are all optdepends: the interface returns a clear
+# error naming the missing piece. fcitx5-text-injector is not in any repository
+# yet, so it could not be a hard dependency even if we wanted one.
+depends=('python')
 optdepends=(
   'fcitx5-text-injector: commits the text to the focused app, immune to IME interference'
+  'ydotool: default key backend, works on Wayland and X11; needs the ydotoold daemon'
+  'wtype: alternative key backend (KEY_BACKEND=wtype), Wayland only'
   'openssl: generate the self-signed HTTPS certificate (remote-input-board-generate-cert)'
   'systemd: run the server as a user service'
 )

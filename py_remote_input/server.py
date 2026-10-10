@@ -13,8 +13,9 @@ from urllib.parse import parse_qs, urlparse
 
 from py_remote_input import paths
 from py_remote_input.auth import TRUSTED_DEVICES_FILE_NAME, AuthStore, load_pin
+from py_remote_input.key_input import active_backend, press_key
 from py_remote_input.logger import Logger
-from py_remote_input.typer import press_key, type_text
+from py_remote_input.text_input import type_text
 from py_remote_input.web import handle_request
 
 
@@ -219,6 +220,14 @@ def serve() -> None:
 
     record_history = build_history_recorder(log_dir)
     handler = build_handler(logger, record_history, type_text, auth, press_key=press_key)
+
+    # The key backend is fixed at startup so a bad KEY_BACKEND fails here
+    # rather than on the first Enter press from the phone.
+    backend = active_backend()
+    if not backend.is_available():
+        logger.warn(f"Key input backend {backend.name} is not installed: {backend.install_hint}")
+    else:
+        logger.info(f"Key input backend: {backend.name}.")
 
     # HTTP always listens on PORT (legacy behaviour); HTTPS joins on
     # HTTPS_PORT (default PORT + 1) when cert.pem/key.pem are present.

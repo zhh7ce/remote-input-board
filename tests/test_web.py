@@ -30,7 +30,7 @@ class HttpEndpointTests(unittest.TestCase):
         self.assertEqual(response.body.decode("utf-8"), template)
         self.assertIn("textarea", response.body.decode("utf-8"))
 
-    def test_type_request_calls_typer(self):
+    def test_type_request_calls_text_input(self):
         calls = []
 
         def type_text(text):
@@ -147,7 +147,7 @@ class HttpEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("Invalid JSON body", response.body.decode("utf-8"))
 
-    def test_typer_failure_returns_500(self):
+    def test_text_injector_failure_returns_500(self):
         def type_text(_text):
             raise RuntimeError("text injector unreachable")
 
@@ -178,7 +178,7 @@ class HttpEndpointTests(unittest.TestCase):
 class UrlApiTests(unittest.TestCase):
     """GET /api/type: token + text/key all carried in the URL."""
 
-    def test_get_type_calls_typer_and_records_history(self):
+    def test_get_type_calls_text_input_and_records_history(self):
         calls = []
         records = []
         response = handle_request(

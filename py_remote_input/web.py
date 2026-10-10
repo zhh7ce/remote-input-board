@@ -45,6 +45,7 @@ def _unauthorized() -> Response:
 PUBLIC_ROUTES = {("GET", "/"), ("GET", "/api/auth-info"), ("POST", "/api/auth")}
 
 
+# Mirrors key_input.ALLOWED_KEYS — a new key must be added to both layers.
 ALLOWED_REMOTE_KEYS = {"Return"}
 
 # Cap for text passed via the query string (GET /api/type). Percent-encoded
