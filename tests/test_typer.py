@@ -39,18 +39,18 @@ def _serve_once(sock_path: Path, reply: dict):
     return thread, received
 
 
-class FlattenLineBreaksTests(unittest.TestCase):
-    def test_lf_becomes_single_space(self):
-        self.assertEqual(typer.flatten_line_breaks("a\nb"), "a b")
+class NormalizeLineEndingsTests(unittest.TestCase):
+    def test_lf_is_preserved(self):
+        self.assertEqual(typer.normalize_line_endings("a\nb"), "a\nb")
 
-    def test_crlf_and_cr_become_single_space(self):
-        self.assertEqual(typer.flatten_line_breaks("a\r\nb\rc"), "a b c")
+    def test_blank_lines_are_preserved(self):
+        self.assertEqual(typer.normalize_line_endings("a\n\n\nb"), "a\n\n\nb")
 
-    def test_newline_runs_collapse_into_one_space(self):
-        self.assertEqual(typer.flatten_line_breaks("a\n\n\nb"), "a b")
+    def test_crlf_becomes_lf(self):
+        self.assertEqual(typer.normalize_line_endings("a\r\nb"), "a\nb")
 
-    def test_blank_text_becomes_single_space(self):
-        self.assertEqual(typer.flatten_line_breaks("\n\n"), " ")
+    def test_lone_cr_becomes_lf(self):
+        self.assertEqual(typer.normalize_line_endings("a\rb"), "a\nb")
 
 
 class InjectorSocketPathTests(unittest.TestCase):
@@ -78,14 +78,21 @@ class TypeTextTests(unittest.TestCase):
             mock.patch.dict(os.environ, {"TEXT_INJECTOR_SOCKET": str(self.sock_path)}, clear=False)
         )
 
-    def test_commits_flattened_text_and_reports_fcitx5_method(self):
+    def test_commits_line_breaks_verbatim(self):
         thread, received = _serve_once(self.sock_path, {"success": True})
         result = typer.type_text("你好\n世界")
         thread.join(timeout=5)
 
-        self.assertEqual(received, [{"type": "commit", "text": "你好 世界"}])
+        self.assertEqual(received, [{"type": "commit", "text": "你好\n世界"}])
         self.assertEqual(result["method"], "fcitx5")
         self.assertEqual(result["charCount"], 5)
+
+    def test_normalizes_crlf_before_committing(self):
+        thread, received = _serve_once(self.sock_path, {"success": True})
+        typer.type_text("a\r\nb\rc")
+        thread.join(timeout=5)
+
+        self.assertEqual(received, [{"type": "commit", "text": "a\nb\nc"}])
 
     def test_server_failure_becomes_text_injector_error(self):
         thread, _ = _serve_once(self.sock_path, {"success": False, "error": "empty text"})

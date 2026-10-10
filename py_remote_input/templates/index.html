@@ -474,7 +474,6 @@
         addHistoryItem(payloadText);
         text.value = "";
         text.focus();
-        if (/\r?\n/.test(payloadText)) showToast("换行已转为空格");
       } catch (error) {
         showToast("发送失败：" + error.message, true);
       } finally {

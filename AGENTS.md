@@ -51,12 +51,12 @@ echo '{"type":"ping"}' | socat - UNIX-CONNECT:"$XDG_RUNTIME_DIR/text-injector.so
 
 | 文件 | 作用 |
 |------|------|
-| `py_remote_input/templates/index.html` | 前端页面（单文件，极简：输入框 + 发送 + 选项 + 本地记录；无状态条/累计字数 UI/WebSocket——未配对由全屏锁屏承担，token 失效 401 自动回锁屏；发送结果走底部 toast，含换行的文本发送后提示"换行已转为空格"） |
+| `py_remote_input/templates/index.html` | 前端页面（单文件，极简：输入框 + 发送 + 选项 + 本地记录；无状态条/累计字数 UI/WebSocket——未配对由全屏锁屏承担，token 失效 401 自动回锁屏；发送失败走底部 toast，成功以清空输入框为反馈。textarea 的内容**原样发送**，多行不再被改写） |
 | `py_remote_input/server.py` | HTTP 服务入口（`build_handler` 注入 `type_text` 与 `press_key`，解析 query 传给路由；`serve()` 组装 XDG 路径、迁移、日志、双端口；`log_message` 整体静默，防止 URL 里的 token/文本进日志） |
 | `py_remote_input/paths.py` | XDG 路径：`config_dir()`/`data_dir()`/`ensure_app_dirs()`/`migrate_legacy_files()`；覆盖变量 `REMOTE_INPUT_CONFIG_DIR`/`REMOTE_INPUT_DATA_DIR` |
 | `py_remote_input/web.py` | HTTP 路由 + 请求处理（auth / type / key / ping / stats）；token 接受 `Authorization: Bearer` 头或 `?token=` 查询参数；`ALLOWED_REMOTE_KEYS={"Return"}` 为远程按键白名单；`MAX_GET_TEXT_CHARS=600` 限制 URL 直发长度 |
 | `py_remote_input/auth.py` | PIN 加载与限流；trusted-device 配对：32 字节随机 token、服务端只存 SHA-256、落盘 `trusted_devices.json`（0600）、**不绑 IP、重启不失效**、`revoke()` 取消配对 |
-| `py_remote_input/typer.py` | 输入通道，**两条**：`type_text(text)` 连 `text-injector.sock` 发 `{"type":"commit","text":...}` 由 fcitx5 提交（**换行折叠为单个空格**——提交出去的换行在多数应用等同回车，会提前提交/执行半条消息）；`press_key(keysym)` 按 `ALLOWED_KEYSYMS` 白名单校验后执行 `wtype -k <keysym>`（回车必须是真实按键，`commitString()` 给不了），`press_return()` 为其便捷封装。异常：`TextInjectorUnavailableError`（socket 连不上）、`TextInjectorError`（模块回 `success:false`）、`WtypeNotFoundError` |
+| `py_remote_input/typer.py` | 输入通道，**两条**：`type_text(text)` 连 `text-injector.sock` 发 `{"type":"commit","text":...}` 由 fcitx5 提交，**换行原样保留**（`commitString()` 交的是字符而非按键事件，所以多行等同粘贴、不会替你按回车；`normalize_line_endings()` 只把 CRLF/裸 CR 归一成 LF）；`press_key(keysym)` 按 `ALLOWED_KEYSYMS` 白名单校验后执行 `wtype -k <keysym>`（回车必须是真实按键，`commitString()` 给不了），`press_return()` 为其便捷封装。异常：`TextInjectorUnavailableError`（socket 连不上）、`TextInjectorError`（模块回 `success:false`）、`WtypeNotFoundError` |
 | `py_remote_input/stats.py` | 字数统计存储 |
 | `py_remote_input/logger.py` | 日志（同时输出 stdout 和文件） |
 | `scripts/rebuild_stats.py` | 从 history 重建 stats.json（默认读写 data 目录；安装后为 `/usr/bin/remote-input-board-rebuild-stats`） |

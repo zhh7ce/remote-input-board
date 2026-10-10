@@ -49,8 +49,12 @@ class FrontendTests(unittest.TestCase):
         # Ping is still used at boot to validate a stored token.
         self.assertIn("/api/ping?token=", self.html)
 
-    def test_line_breaks_are_flattened_with_a_hint(self):
-        self.assertIn("换行已转为空格", self.html)
+    def test_line_breaks_are_sent_verbatim_without_a_warning(self):
+        # commitString() delivers newlines as text, never as Enter events, so the
+        # old "换行已转为空格" hint would be an outright lie.
+        self.assertNotIn("换行已转为空格", self.html)
+        self.assertIn("const payloadText = text.value;", self.html)
+        self.assertNotIn("payloadText.replace(", self.html)
 
     def test_url_token_auto_pairs(self):
         self.assertIn("adoptUrlToken", self.html)

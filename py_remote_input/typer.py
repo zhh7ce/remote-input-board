@@ -5,6 +5,11 @@ reaches the focused app as finished text no matter which input method is active.
 Key simulation (wtype/ydotool) cannot do this: an IME intercepts the synthesized
 keystrokes and mangles them.
 
+Because ``commitString()`` delivers characters rather than key events, line
+breaks survive as plain text and never act as Enter — so multi-line messages are
+committed verbatim. Only CR/CRLF are normalized to LF, since a bare CR committed
+into a text field renders as garbage depending on the app.
+
 Enter is a real key event rather than committed text, so it still goes to wtype.
 
 Socket protocol (one request per connection): send JSON, half-close the write
@@ -15,7 +20,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import socket
 import subprocess
@@ -45,14 +49,14 @@ class WtypeNotFoundError(RuntimeError):
     """Raised when the wtype executable cannot be found on PATH."""
 
 
-def flatten_line_breaks(text: str) -> str:
-    """Collapse CR/LF/CRLF runs into a single space.
+def normalize_line_endings(text: str) -> str:
+    """Turn CRLF and lone CR into LF.
 
-    A committed line break acts like Enter in most apps, which would submit or
-    execute half a message early; a remote text message must never press Enter
-    on its own — that is what ``press_key`` is for.
+    Line breaks themselves are safe to commit — commitString() delivers them as
+    text, not as Enter key events — but a stray CR reaching a text field shows
+    up as garbage in most apps.
     """
-    return re.sub(r"[\r\n]+", " ", text)
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def injector_socket_path() -> str:
@@ -102,15 +106,15 @@ def _request(payload: dict) -> dict:
 
 
 def type_text(text: str) -> dict:
-    """Commit ``text`` to the focused app through fcitx5 (never presses Enter)."""
-    flat = flatten_line_breaks(text)
+    """Commit ``text`` to the focused app through fcitx5, line breaks included."""
+    committed = normalize_line_endings(text)
     started_at = time.perf_counter()
-    response = _request({"type": "commit", "text": flat})
+    response = _request({"type": "commit", "text": committed})
     if not response.get("success"):
         raise TextInjectorError(response.get("error") or "fcitx5-text-injector rejected the text")
     return {
         "method": "fcitx5",
-        "charCount": len(flat),
+        "charCount": len(committed),
         "durationMs": int((time.perf_counter() - started_at) * 1000),
     }
 
