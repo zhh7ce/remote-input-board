@@ -1,6 +1,8 @@
 # Remote Input Board 📱→💻
 
-**用手机浏览器给 Linux 电脑远程输入文字。** 电脑上跑一个小服务，手机打开网页输入文字，点发送就通过 [wtype](https://github.com/atx/wtype) 输入到电脑当前光标处。
+**用手机浏览器给 Linux 电脑远程输入文字。** 电脑上跑一个小服务，手机打开网页输入文字，点发送就通过 [fcitx5-text-injector](https://github.com/zhh7ce/fcitx5-text-injector) 走 fcitx5 的 `commitString()` 提交到电脑当前光标处。
+
+**为什么不用 wtype/ydotool 打字**：它们模拟的是按键事件，一旦系统开着中文输入法，按键会被输入法拦截并重新组字，导致输入乱掉。fcitx5 模块直接把成品文字提交给焦点应用，**输入法开着也正常**。回车仍由 wtype 发出（`commitString()` 产生不了真实按键）。
 
 当前为 Linux/Wayland 精简版，只保留**文字发送**能力（无长连接，纯 HTTP：token 与内容随请求发送）；另有一个可开关的小功能：输入框为空时点发送可在电脑上触发回车。鼠标触控板、快捷指令等 Windows 版功能暂未移植。
 
@@ -10,8 +12,8 @@
 
 ### 环境要求
 
-- Linux + **Wayland** 会话（wtype 依赖 virtual-keyboard 协议）
-- 安装 `wtype`：
+- Linux + **Wayland** 会话 + **fcitx5** 输入法框架
+- 安装 `wtype`（仅远程回车用）：
 
 ```bash
 # Debian / Ubuntu
@@ -22,7 +24,25 @@ sudo pacman -S wtype
 sudo dnf install wtype
 ```
 
-> 服务进程需要能访问你的图形会话（`WAYLAND_DISPLAY`、`XDG_RUNTIME_DIR`）。在桌面会话里启动，或用 systemd --user 服务，通常都能自动继承。
+- 安装 **fcitx5-text-injector** 模块（文字输入用）。它是一个 fcitx5 addon，需要单独构建安装：
+
+```bash
+git clone https://github.com/zhh7ce/fcitx5-text-injector.git
+cd fcitx5-text-injector/packaging/arch
+makepkg -si
+# 装好后重启 fcitx5，让模块加载并创建 socket
+fcitx5 -rd
+```
+
+装好后应能看到 socket 文件，并能 ping 通：
+
+```bash
+ls -la "$XDG_RUNTIME_DIR/text-injector.sock"
+echo '{"type":"ping"}' | socat - UNIX-CONNECT:"$XDG_RUNTIME_DIR/text-injector.sock"
+# {"pong":true}
+```
+
+> 服务进程需要能访问你的图形会话（`WAYLAND_DISPLAY`、`XDG_RUNTIME_DIR`）。在桌面会话里启动，或用 systemd --user 服务，通常都能自动继承。模块若在 fcitx5 配置里改了 socket 路径，用 `TEXT_INJECTOR_SOCKET` 告诉本服务。
 
 ### Arch Linux 安装（PKGBUILD）
 
@@ -44,7 +64,9 @@ makepkg -si
 | `/usr/lib/python3.x/site-packages/py_remote_input/` | 程序本体（含页面模板） |
 | `/usr/lib/systemd/user/remote-input-board.service` | 用户服务，`systemctl --user enable --now remote-input-board` 启用 |
 
-依赖 `python` 与 `wtype`（由 pacman 自动安装）；`openssl`、`systemd` 为可选依赖。
+依赖 `python` 与 `wtype`（由 pacman 自动安装）。**文字输入还额外需要 fcitx5-text-injector 模块**——它尚未进任何仓库，所以没写进 `depends`（否则本包会装不上），请按上面的步骤单独构建安装。`openssl`、`systemd` 为可选依赖。
+
+> **打包取的是本地工作树，不联网**：`PKGBUILD` 的 `source=()` 为空，`prepare()` 直接从仓库根目录（`$startdir/../..`）复制源码，所以在自己的 checkout 里改完代码就能立刻 `makepkg -f`，不必先 push 到 GitHub。代价是打出来的包**包含未提交的改动**——要分享给别人就先 commit（`pkgver()` 报的是当前 HEAD 的 `rN.gHASH`，不会体现未提交内容）。已在 `packaging/arch/` 下留下的旧 GitHub 克隆会在每次 `prepare()` 时被清掉，不会串味。
 
 ### 快速开始（源码方式）
 
@@ -160,9 +182,11 @@ SSL_CERT_FILE=/path/cert.pem SSL_KEY_FILE=/path/key.pem \
   - `GET /api/ping?token=...`（校验配对状态）
 - 打开 `http://IP:3210/?token=<token>` 可**跳过 PIN 直接配对**（页面把 token 存入浏览器后自动从地址栏抹掉）；把这条链接发给新手机即完成授权
 - 空发送回车：HTTP body `{"key":"Return"}`；服务端有按键白名单（当前仅 `Return`），非白名单返回 400。历史中记为 `{"kind":"key","key":"Return"}`，不计入累计字数
-- 服务端调用 `wtype <text>`；文本中的换行符会**折叠成单个空格**——因为打出的换行就是真实回车，会把半条消息提前提交/执行（终端里尤其危险）。需要回车时用空发送回车功能，它才会真的按 `wtype -k Return`；长文本自动分批调用
-- wtype 未安装时接口返回明确的错误提示，手机页面可见
+- 服务端通过 Unix socket 让 fcitx5-text-injector 执行 `commit`，把文本作为成品文字提交给焦点应用，**因此不受输入法干扰**。文本中的换行符仍会**折叠成单个空格**——提交出去的换行在多数应用里等同回车，会把半条消息提前提交/执行（终端里尤其危险）。需要回车时用空发送回车功能，它才会真的走 `wtype -k Return`
+- 回车走 wtype 而非 fcitx5：`commitString()` 只能交文本，产生不了真实按键事件
+- socket 连不上（模块没装、fcitx5 没开）或 wtype 未安装时，接口返回明确的错误提示，手机页面可见
+- 长文本一次性通过 socket 发送，不受命令行长度限制（这是相对 wtype 打字的一个额外好处）
 
 ### 技术栈
 
-`Python 标准库（http.server）` `wtype` `原生 JS（无框架）`
+`Python 标准库（http.server）` `fcitx5-text-injector（Unix socket）` `wtype（仅回车）` `原生 JS（无框架）`
