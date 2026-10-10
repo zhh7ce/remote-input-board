@@ -11,7 +11,7 @@
 #
 # Runtime files follow XDG:
 #   config:  ~/.config/remote-input-board  (pin.txt, trusted_devices.json, cert/key)
-#   data:    ~/.local/share/remote-input-board  (logs, history, stats.json)
+#   data:    ~/.local/share/remote-input-board  (logs, history)
 pkgname=remote-input-board-git
 _pkgname=remote-input-board
 pkgver=r55.gb0fb227
@@ -77,8 +77,6 @@ package() {
   # Helper CLI tools shipped from scripts/.
   install -Dm755 scripts/generate_cert.sh \
     "${pkgdir}/usr/bin/remote-input-board-generate-cert"
-  install -Dm755 scripts/rebuild_stats.py \
-    "${pkgdir}/usr/bin/remote-input-board-rebuild-stats"
 
   # User service (not enabled by default):
   #   systemctl --user enable --now remote-input-board.service

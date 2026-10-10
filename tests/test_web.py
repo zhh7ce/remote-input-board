@@ -21,14 +21,6 @@ class FakeLogger:
         self.messages.append(("error", message, meta))
 
 
-class FakeTextStats:
-    def __init__(self, total=0):
-        self.total = total
-
-    def get_total_chars(self):
-        return self.total
-
-
 class HttpEndpointTests(unittest.TestCase):
     def test_serves_mobile_page(self):
         response = handle_request("GET", "/", b"", lambda _text: {}, FakeLogger())
@@ -74,17 +66,17 @@ class HttpEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(records, [{"kind": "text", "text": "重要内容"}])
 
-    def test_type_request_includes_total_chars(self):
+    def test_type_request_returns_only_its_own_length(self):
         response = handle_request(
             "POST",
             "/api/type",
             json.dumps({"text": "字"}).encode("utf-8"),
             lambda _text: {"method": "fcitx5"},
             FakeLogger(),
-            text_stats=FakeTextStats(99),
         )
 
-        self.assertEqual(json.loads(response.body.decode("utf-8"))["totalChars"], 99)
+        self.assertEqual(json.loads(response.body.decode("utf-8"))["sentChars"], 1)
+        self.assertNotIn("totalChars", json.loads(response.body.decode("utf-8")))
 
     def test_key_request_presses_return(self):
         pressed = []
@@ -108,7 +100,7 @@ class HttpEndpointTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["key"], "Return")
 
-    def test_key_request_records_history_without_char_stats(self):
+    def test_key_request_records_history(self):
         records = []
         response = handle_request(
             "POST",
@@ -170,18 +162,12 @@ class HttpEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 500)
         self.assertIn("text injector unreachable", response.body.decode("utf-8"))
 
-    def test_stats_endpoint_returns_total(self):
-        response = handle_request(
-            "GET",
-            "/api/stats",
-            b"",
-            lambda _text: {},
-            FakeLogger(),
-            text_stats=FakeTextStats(42),
-        )
+    def test_stats_endpoint_is_gone(self):
+        # The cumulative char counter was removed; the route must 404, not
+        # silently keep serving a stale total.
+        response = handle_request("GET", "/api/stats", b"", lambda _text: {}, FakeLogger())
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(json.loads(response.body.decode("utf-8"))["totalChars"], 42)
+        self.assertEqual(response.status_code, 404)
 
     def test_unknown_route_returns_404(self):
         response = handle_request("GET", "/api/mouse/click", b"", lambda _text: {}, FakeLogger())
@@ -313,11 +299,6 @@ class PinGateTests(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertEqual(json.loads(info.body.decode("utf-8"))["pinLength"], 6)
 
-    def test_stats_requires_pin(self):
-        response = self.request("GET", "/api/stats")
-        self.assertEqual(response.status_code, 401)
-        self.assertTrue(json.loads(response.body.decode("utf-8"))["authRequired"])
-
     def test_type_requires_pin(self):
         response = self.request("POST", "/api/type", json.dumps({"text": "hi"}).encode("utf-8"))
         self.assertEqual(response.status_code, 401)
@@ -338,8 +319,8 @@ class PinGateTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         token = json.loads(response.body.decode("utf-8"))["token"]
 
-        stats = self.request("GET", "/api/stats", token=token)
-        self.assertEqual(stats.status_code, 200)
+        ping = self.request("GET", "/api/ping", token=token)
+        self.assertEqual(ping.status_code, 200)
 
     def test_bearer_token_still_works(self):
         response = self.request("POST", "/api/auth", json.dumps({"pin": "482915"}).encode("utf-8"))
@@ -386,17 +367,17 @@ class PinGateTests(unittest.TestCase):
         response = self.request("POST", "/api/auth", json.dumps({"pin": "482915"}).encode("utf-8"))
         token = json.loads(response.body.decode("utf-8"))["token"]
 
-        foreign = self.request("GET", "/api/stats", token=token, ip="10.0.0.7")
+        foreign = self.request("GET", "/api/ping", token=token, ip="10.0.0.7")
         self.assertEqual(foreign.status_code, 200)
 
     def test_logout_revokes_token(self):
         response = self.request("POST", "/api/auth", json.dumps({"pin": "482915"}).encode("utf-8"))
         token = json.loads(response.body.decode("utf-8"))["token"]
-        self.assertEqual(self.request("GET", "/api/stats", token=token).status_code, 200)
+        self.assertEqual(self.request("GET", "/api/ping", token=token).status_code, 200)
 
         logout = self.request("POST", "/api/logout", token=token)
         self.assertEqual(logout.status_code, 200)
-        self.assertEqual(self.request("GET", "/api/stats", token=token).status_code, 401)
+        self.assertEqual(self.request("GET", "/api/ping", token=token).status_code, 401)
 
     def test_logout_accepts_query_token(self):
         response = self.request("POST", "/api/auth", json.dumps({"pin": "482915"}).encode("utf-8"))

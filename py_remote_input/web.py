@@ -52,7 +52,7 @@ ALLOWED_REMOTE_KEYS = {"Return"}
 MAX_GET_TEXT_CHARS = 600
 
 
-def _handle_type_text(text, type_text, logger, record_history, text_stats) -> Response:
+def _handle_type_text(text, type_text, logger, record_history) -> Response:
     if not isinstance(text, str) or not text.strip():
         logger.warn("Rejected empty text submission.")
         return json_response(400, {"error": "Text is required."})
@@ -62,11 +62,8 @@ def _handle_type_text(text, type_text, logger, record_history, text_stats) -> Re
         result = type_text(text)
         if record_history is not None:
             record_history({"kind": "text", "text": text})
-        total_chars = text_stats.get_total_chars() if text_stats is not None else None
         logger.info("Typing request completed.", result)
         payload = {"ok": True, "sentChars": len(text), **result}
-        if total_chars is not None:
-            payload["totalChars"] = total_chars
         return json_response(200, payload)
     except Exception as exc:  # noqa: BLE001
         logger.error("Typing request failed.", {"error": str(exc)})
@@ -99,7 +96,6 @@ def handle_request(
     *,
     press_key=None,
     record_history=None,
-    text_stats=None,
     auth=None,
     client_ip: str = "",
     token: str | None = None,
@@ -149,10 +145,6 @@ def handle_request(
         # Cheap pairing probe for the mobile page (requires a valid token).
         return json_response(200, {"ok": True})
 
-    if method == "GET" and path == "/api/stats":
-        total_chars = text_stats.get_total_chars() if text_stats is not None else 0
-        return json_response(200, {"ok": True, "totalChars": total_chars})
-
     if method == "GET" and path == "/api/type":
         if "key" in params:
             return _handle_type_key(params.get("key"), press_key, logger, record_history)
@@ -163,7 +155,7 @@ def handle_request(
                     400,
                     {"error": f"Text too long for GET (max {MAX_GET_TEXT_CHARS} chars); use POST /api/type."},
                 )
-            return _handle_type_text(url_text, type_text, logger, record_history, text_stats)
+            return _handle_type_text(url_text, type_text, logger, record_history)
         return json_response(400, {"error": "Provide text or key in the query string."})
 
     if method == "POST" and path == "/api/type":
@@ -176,6 +168,6 @@ def handle_request(
         if key is not None:
             return _handle_type_key(key, press_key, logger, record_history)
 
-        return _handle_type_text(payload.get("text", ""), type_text, logger, record_history, text_stats)
+        return _handle_type_text(payload.get("text", ""), type_text, logger, record_history)
 
     return json_response(404, {"error": "Not found."})

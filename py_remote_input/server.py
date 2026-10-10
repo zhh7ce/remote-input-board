@@ -14,7 +14,6 @@ from urllib.parse import parse_qs, urlparse
 from py_remote_input import paths
 from py_remote_input.auth import TRUSTED_DEVICES_FILE_NAME, AuthStore, load_pin
 from py_remote_input.logger import Logger
-from py_remote_input.stats import TextStatsStore, count_text_history_chars
 from py_remote_input.typer import press_key, type_text
 from py_remote_input.web import handle_request
 
@@ -37,12 +36,9 @@ def get_local_addresses(port: int) -> list[str]:
     return addresses
 
 
-def build_history_recorder(log_dir: Path, stats_file_path: Path | None = None):
+def build_history_recorder(log_dir: Path):
     history_dir = log_dir / "history"
     history_dir.mkdir(parents=True, exist_ok=True)
-    if stats_file_path is None:
-        stats_file_path = log_dir / "stats.json"
-    text_stats = TextStatsStore(stats_file_path, initial_total_chars=count_text_history_chars(history_dir))
 
     def record_history(item: dict) -> None:
         now = datetime.now()
@@ -56,10 +52,10 @@ def build_history_recorder(log_dir: Path, stats_file_path: Path | None = None):
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
-    return record_history, text_stats
+    return record_history
 
 
-def build_handler(logger: Logger, record_history, text_stats, type_text, auth: AuthStore, press_key=None):
+def build_handler(logger: Logger, record_history, type_text, auth: AuthStore, press_key=None):
     class RequestHandler(BaseHTTPRequestHandler):
         # HTTP/1.1 enables keep-alive so repeated sends reuse the connection.
         protocol_version = "HTTP/1.1"
@@ -104,7 +100,6 @@ def build_handler(logger: Logger, record_history, text_stats, type_text, auth: A
                 logger,
                 press_key=press_key,
                 record_history=record_history,
-                text_stats=text_stats,
                 auth=auth,
                 client_ip=self.client_address[0],
                 token=self._bearer_token(),
@@ -185,7 +180,7 @@ def create_servers(
 ) -> tuple[list[ThreadingHTTPServer], int | None]:
     """Bind the plain HTTP server and, when certs exist, a second TLS server.
 
-    Both share the same handler (PIN sessions, stats, history included).
+    Both share the same handler (PIN sessions and history included).
     """
     http_server = ThreadingHTTPServer(("0.0.0.0", port), handler)
     cert_file, key_file, tls_ready = tls_status(base_dir)
@@ -222,8 +217,8 @@ def serve() -> None:
     else:
         logger.info(f"Loaded PIN from {'PIN_CODE' if os.environ.get('PIN_CODE', '').strip() else pin_path}.")
 
-    record_history, text_stats = build_history_recorder(log_dir, log_dir / "stats.json")
-    handler = build_handler(logger, record_history, text_stats, type_text, auth, press_key=press_key)
+    record_history = build_history_recorder(log_dir)
+    handler = build_handler(logger, record_history, type_text, auth, press_key=press_key)
 
     # HTTP always listens on PORT (legacy behaviour); HTTPS joins on
     # HTTPS_PORT (default PORT + 1) when cert.pem/key.pem are present.
@@ -255,7 +250,7 @@ def serve() -> None:
     logger.info("Keep the target desktop app focused before sending text from your phone.")
 
     # Handle SIGINT (Ctrl-C / kill -INT) and SIGTERM (systemd's default) the
-    # same way so shutdown flushes stats and paired devices either way.
+    # same way so shutdown flushes paired devices either way.
     stop_event = threading.Event()
 
     def _request_stop(_signum, _frame) -> None:
@@ -270,6 +265,5 @@ def serve() -> None:
         for running_server in servers:
             running_server.shutdown()
             running_server.server_close()
-        text_stats.flush()
         auth.flush()
         logger.info("Server stopped.")

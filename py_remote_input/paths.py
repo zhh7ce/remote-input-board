@@ -6,7 +6,7 @@ longer live in the working directory:
 
 * Config (PIN, paired devices, TLS cert/key) ->
   ``$XDG_CONFIG_HOME/remote-input-board`` (default ``~/.config/...``)
-* Mutable data (server log, input history, char stats) ->
+* Mutable data (server log, input history) ->
   ``$XDG_DATA_HOME/remote-input-board`` (default ``~/.local/share/...``),
   keeping the ``logs/`` subdirectory layout.
 
@@ -47,7 +47,7 @@ def config_dir() -> Path:
 
 
 def data_dir() -> Path:
-    """Directory for logs/, history and stats.json."""
+    """Directory for logs/ and history."""
     return _xdg_root("REMOTE_INPUT_DATA_DIR", "XDG_DATA_HOME", Path(".local/share"))
 
 
@@ -98,7 +98,7 @@ def migrate_legacy_files(
     target_logs = data / "logs"
     if legacy_logs.is_dir() and target_logs.is_dir() and not any(target_logs.iterdir()):
         # ensure_app_dirs() pre-created an empty target logs dir; swap it for
-        # the legacy one so its history and stats move over wholesale.
+        # the legacy one so its history moves over wholesale.
         target_logs.rmdir()
         shutil.move(str(legacy_logs), str(target_logs))
         moved.append("logs/")
