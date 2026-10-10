@@ -1,8 +1,8 @@
 # Remote Input Board 📱→💻
 
-**用手机浏览器给 Linux 电脑远程输入文字。** 电脑上跑一个小服务，手机打开网页输入文字，点发送就通过 [wtype](https://github.com/atx/wtype) 输入到电脑当前光标处。
+**用手机浏览器给 Linux 电脑远程输入文字。** 电脑上跑一个小服务，手机打开网页输入文字，点发送就通过 [ydotool](https://github.com/ReimuNotMoe/ydotool) 输入到电脑当前光标处。
 
-当前为 Linux/Wayland 精简版，只保留**文字发送**能力（无长连接，纯 HTTP：token 与内容随请求发送）；另有一个可开关的小功能：输入框为空时点发送可在电脑上触发回车。鼠标触控板、快捷指令等 Windows 版功能暂未移植。
+当前为 Linux 精简版，只保留**文字发送**能力（无长连接，纯 HTTP：token 与内容随请求发送）；另有一个可开关的小功能：输入框为空时点发送可在电脑上触发回车。鼠标触控板、快捷指令等 Windows 版功能暂未移植。
 
 每台手机**配对一次**：首次连接输入 **PIN 码**（手机锁屏样式的数字键盘点按，不弹系统键盘），服务端长期记住该设备，之后手机 IP 变化或服务重启都免输；可选 HTTPS 加密传输。
 
@@ -10,19 +10,19 @@
 
 ### 环境要求
 
-- Linux + **Wayland** 会话（wtype 依赖 virtual-keyboard 协议）
-- 安装 `wtype`：
+- Linux（Wayland 或 X11 均可）
+- 安装 `ydotool`：
 
 ```bash
 # Debian / Ubuntu
-sudo apt install wtype
+sudo apt install ydotool
 # Arch
-sudo pacman -S wtype
+sudo pacman -S ydotool
 # Fedora
-sudo dnf install wtype
+sudo dnf install ydotool
 ```
 
-> 服务进程需要能访问你的图形会话（`WAYLAND_DISPLAY`、`XDG_RUNTIME_DIR`）。在桌面会话里启动，或用 systemd --user 服务，通常都能自动继承。
+> ydotool 通过内核的 uinput 接口模拟输入，需要访问 `/dev/uinput`。通常需要将用户加入 `input` 组，或运行 `ydotoold` 守护进程。
 
 ### Arch Linux 安装（PKGBUILD）
 
@@ -44,7 +44,7 @@ makepkg -si
 | `/usr/lib/python3.x/site-packages/py_remote_input/` | 程序本体（含页面模板） |
 | `/usr/lib/systemd/user/remote-input-board.service` | 用户服务，`systemctl --user enable --now remote-input-board` 启用 |
 
-依赖 `python` 与 `wtype`（由 pacman 自动安装）；`openssl`、`systemd` 为可选依赖。
+依赖 `python` 与 `ydotool`（由 pacman 自动安装）；`openssl`、`systemd` 为可选依赖。
 
 ### 快速开始（源码方式）
 
@@ -160,9 +160,9 @@ SSL_CERT_FILE=/path/cert.pem SSL_KEY_FILE=/path/key.pem \
   - `GET /api/ping?token=...`（校验配对状态）
 - 打开 `http://IP:3210/?token=<token>` 可**跳过 PIN 直接配对**（页面把 token 存入浏览器后自动从地址栏抹掉）；把这条链接发给新手机即完成授权
 - 空发送回车：HTTP body `{"key":"Return"}`；服务端有按键白名单（当前仅 `Return`），非白名单返回 400。历史中记为 `{"kind":"key","key":"Return"}`，不计入累计字数
-- 服务端调用 `wtype <text>`；文本中的换行符会**折叠成单个空格**——因为打出的换行就是真实回车，会把半条消息提前提交/执行（终端里尤其危险）。需要回车时用空发送回车功能，它才会真的按 `wtype -k Return`；长文本自动分批调用
-- wtype 未安装时接口返回明确的错误提示，手机页面可见
+- 服务端调用 `ydotool type --delay 0 -- <text>`；文本中的换行符会**折叠成单个空格**——因为打出的换行就是真实回车，会把半条消息提前提交/执行（终端里尤其危险）。需要回车时用空发送回车功能，它才会真的按 `ydotool key 28`（28 是 Linux 内核键码中的 Enter）；长文本自动分批调用
+- ydotool 未安装时接口返回明确的错误提示，手机页面可见
 
 ### 技术栈
 
-`Python 标准库（http.server）` `wtype` `原生 JS（无框架）`
+`Python 标准库（http.server）` `ydotool` `原生 JS（无框架）`

@@ -43,7 +43,7 @@ class HttpEndpointTests(unittest.TestCase):
 
         def type_text(text):
             calls.append(text)
-            return {"method": "wtype", "durationMs": 12, "charCount": 2}
+            return {"method": "ydotool", "durationMs": 12, "charCount": 2}
 
         response = handle_request(
             "POST",
@@ -58,7 +58,7 @@ class HttpEndpointTests(unittest.TestCase):
         payload = json.loads(response.body.decode("utf-8"))
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["sentChars"], 2)
-        self.assertEqual(payload["method"], "wtype")
+        self.assertEqual(payload["method"], "ydotool")
 
     def test_type_request_records_history(self):
         records = []
@@ -66,7 +66,7 @@ class HttpEndpointTests(unittest.TestCase):
             "POST",
             "/api/type",
             json.dumps({"text": "重要内容"}).encode("utf-8"),
-            lambda _text: {"method": "wtype"},
+            lambda _text: {"method": "ydotool"},
             FakeLogger(),
             record_history=lambda item: records.append(item),
         )
@@ -79,7 +79,7 @@ class HttpEndpointTests(unittest.TestCase):
             "POST",
             "/api/type",
             json.dumps({"text": "字"}).encode("utf-8"),
-            lambda _text: {"method": "wtype"},
+            lambda _text: {"method": "ydotool"},
             FakeLogger(),
             text_stats=FakeTextStats(99),
         )
@@ -91,7 +91,7 @@ class HttpEndpointTests(unittest.TestCase):
 
         def press_key(key):
             pressed.append(key)
-            return {"method": "wtype", "key": key}
+            return {"method": "ydotool", "key": key}
 
         response = handle_request(
             "POST",
@@ -116,7 +116,7 @@ class HttpEndpointTests(unittest.TestCase):
             json.dumps({"key": "Return"}).encode("utf-8"),
             lambda _text: {},
             FakeLogger(),
-            press_key=lambda key: {"method": "wtype", "key": key},
+            press_key=lambda key: {"method": "ydotool", "key": key},
             record_history=lambda item: records.append(item),
         )
 
@@ -157,7 +157,7 @@ class HttpEndpointTests(unittest.TestCase):
 
     def test_typer_failure_returns_500(self):
         def type_text(_text):
-            raise RuntimeError("wtype exploded")
+            raise RuntimeError("ydotool exploded")
 
         response = handle_request(
             "POST",
@@ -168,7 +168,7 @@ class HttpEndpointTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 500)
-        self.assertIn("wtype exploded", response.body.decode("utf-8"))
+        self.assertIn("ydotool exploded", response.body.decode("utf-8"))
 
     def test_stats_endpoint_returns_total(self):
         response = handle_request(
@@ -199,7 +199,7 @@ class UrlApiTests(unittest.TestCase):
             "GET",
             "/api/type",
             b"",
-            lambda text: calls.append(text) or {"method": "wtype"},
+            lambda text: calls.append(text) or {"method": "ydotool"},
             FakeLogger(),
             record_history=records.append,
             query={"token": "t", "text": "链接发送"},
@@ -221,7 +221,7 @@ class UrlApiTests(unittest.TestCase):
             b"",
             lambda _text: {},
             FakeLogger(),
-            press_key=lambda key: pressed.append(key) or {"method": "wtype", "key": key},
+            press_key=lambda key: pressed.append(key) or {"method": "ydotool", "key": key},
             record_history=records.append,
             query={"key": "Return"},
         )
@@ -274,7 +274,7 @@ class UrlApiTests(unittest.TestCase):
             "GET",
             "/api/type",
             b"",
-            lambda _text: {"method": "wtype"},
+            lambda _text: {"method": "ydotool"},
             FakeLogger(),
             query={"text": "好" * MAX_GET_TEXT_CHARS},
         )
@@ -299,7 +299,7 @@ class PinGateTests(unittest.TestCase):
             method,
             path,
             body,
-            lambda _text: {"method": "wtype"},
+            lambda _text: {"method": "ydotool"},
             self.logger,
             auth=self.auth,
             client_ip=ip,
@@ -349,7 +349,7 @@ class PinGateTests(unittest.TestCase):
             "POST",
             "/api/type",
             json.dumps({"text": "头令牌"}).encode("utf-8"),
-            lambda _text: {"method": "wtype"},
+            lambda _text: {"method": "ydotool"},
             self.logger,
             auth=self.auth,
             client_ip=self.IP,

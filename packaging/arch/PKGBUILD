@@ -8,13 +8,13 @@
 #   data:    ~/.local/share/remote-input-board  (logs, history, stats.json)
 pkgname=remote-input-board-git
 _pkgname=remote-input-board
-pkgver=r0.gdeadbee
+pkgver=r53.geb768c0
 pkgrel=1
-pkgdesc="Use a phone browser as a remote text input panel for Linux (Wayland, via wtype)"
+pkgdesc="Use a phone browser as a remote text input panel for Linux (via ydotool)"
 arch=('any')
 url="https://github.com/zhh7ce/${_pkgname}"
 license=('custom')
-depends=('python' 'wtype')
+depends=('python' 'ydotool')
 optdepends=(
   'openssl: generate the self-signed HTTPS certificate (remote-input-board-generate-cert)'
   'systemd: run the server as a user service'
