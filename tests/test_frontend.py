@@ -21,7 +21,7 @@ class FrontendTests(unittest.TestCase):
         self.assertNotIn('"/ws"', self.html)
         self.assertNotIn("connectRealtime", self.html)
         # Sends carry the token in the URL: POST /api/type?token=...
-        self.assertIn('"/api/type?token="', self.html)
+        self.assertIn('"api/type?token="', self.html)
         self.assertIn("sendRequest", self.html)
 
     def test_sends_text_and_key_as_plain_payloads(self):
@@ -47,7 +47,7 @@ class FrontendTests(unittest.TestCase):
         self.assertNotIn("已配对", self.html)
         self.assertNotIn("未配对", self.html)
         # Ping is still used at boot to validate a stored token.
-        self.assertIn("/api/ping?token=", self.html)
+        self.assertIn("api/ping?token=", self.html)
 
     def test_line_breaks_are_sent_verbatim_without_a_warning(self):
         # commitString() delivers newlines as text, never as Enter events, so the
@@ -77,13 +77,20 @@ class FrontendTests(unittest.TestCase):
         self.assertNotIn('contenteditable', lock_section)
 
     def test_pin_auth_flow_and_token_storage(self):
-        self.assertIn('"/api/auth"', self.html)
-        self.assertIn('"/api/auth-info"', self.html)
-        self.assertIn('"/api/logout"', self.html)
+        self.assertIn('fetch("api/auth"', self.html)
+        self.assertIn('fetch("api/auth-info"', self.html)
+        self.assertIn('fetch("api/logout"', self.html)
         self.assertIn("remoteInput.token", self.html)
         self.assertIn("response.status === 401", self.html)
         self.assertIn('id="lockButton"', self.html)
         self.assertIn("lockDevice", self.html)
+
+    def test_api_fetches_are_relative_so_gateway_prefixes_work(self):
+        # 飞牛统一网关把服务挂在 /app/remote-input-board 下；fetch 写成
+        # /api/… 会被解析到站点根，请求永远打不到上游。
+        self.assertNotIn('fetch("/api/', self.html)
+        for name in ("auth", "auth-info", "ping", "type", "logout"):
+            self.assertIn('fetch("api/' + name, self.html)
 
     def test_removed_windows_features_are_gone(self):
         self.assertNotIn("trackpad", self.html)

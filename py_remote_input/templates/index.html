@@ -290,6 +290,7 @@
     const TOKEN_STORAGE_KEY = "remoteInput.token";
     const HISTORY_LIMIT = 20;
 
+    // 下面的 fetch 路径一律相对页面 URL：写成 /api/… 会解析到站点根，绕过网关前缀 /app/remote-input-board。
     let sending = false;
     let pinLength = 6;
     let pinBuffer = "";
@@ -373,7 +374,7 @@
       pinBusy = true;
       setLockError("");
       try {
-        const response = await fetch("/api/auth", {
+        const response = await fetch("api/auth", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ pin: pinBuffer }),
@@ -407,7 +408,7 @@
       const token = getToken();
       if (token) {
         try {
-          await fetch("/api/logout", { method: "POST", headers: { Authorization: "Bearer " + token } });
+          await fetch("api/logout", { method: "POST", headers: { Authorization: "Bearer " + token } });
         } catch {}
       }
       localStorage.removeItem(TOKEN_STORAGE_KEY);
@@ -426,7 +427,7 @@
     async function sendRequest(payload) {
       const token = getToken();
       if (!token) { showLock(); throw new Error("需要配对"); }
-      const response = await fetch("/api/type?token=" + encodeURIComponent(token), {
+      const response = await fetch("api/type?token=" + encodeURIComponent(token), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -557,7 +558,7 @@
       const token = getToken();
       if (!token) { showLock(); return; }
       try {
-        const response = await fetch("/api/ping?token=" + encodeURIComponent(token));
+        const response = await fetch("api/ping?token=" + encodeURIComponent(token));
         if (response.ok) {
           unlock();
           return;
@@ -574,7 +575,7 @@
       renderHistory();
       adoptUrlToken();
       try {
-        const info = await fetch("/api/auth-info").then((r) => r.json());
+        const info = await fetch("api/auth-info").then((r) => r.json());
         if (info.ok && Number.isInteger(info.pinLength) && info.pinLength > 0) {
           pinLength = info.pinLength;
           renderDots();
