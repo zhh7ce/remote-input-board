@@ -2,12 +2,12 @@
 
 ## 项目简介
 
-远程输入板（Linux 版） — 用手机浏览器作为 Linux 电脑的远程文本输入面板。当前为精简版，核心是**文字发送**：手机网页发送文字，电脑端通过 `ydotool`（uinput，Wayland/X11 通用）输入到当前光标处。通信为**无状态纯 HTTP，无 WebSocket 长连接**：token 与文本可同置一条链接（`GET /api/type?token=...&text=...`），也可 Bearer 头 + POST body。另有可选的**空发送回车**：前端复选框控制（localStorage `remoteInput.enterWhenEmpty`），勾选后输入框为空点发送即按一次 Enter（`ydotool key 28`）。
+远程输入板（Linux 版） — 用手机浏览器作为 Linux 电脑的远程文本输入面板。当前为精简版，核心是**文字发送**：手机网页发送文字，电脑端通过 `wtype`（Wayland virtual-keyboard）输入到当前光标处。通信为**无状态纯 HTTP，无 WebSocket 长连接**：token 与文本可同置一条链接（`GET /api/type?token=...&text=...`），也可 Bearer 头 + POST body。另有可选的**空发送回车**：前端复选框控制（localStorage `remoteInput.enterWhenEmpty`），勾选后输入框为空点发送即按一次 Enter（`wtype -k Return`）。
 
 - **服务端口**: 3210（HTTP）/ 3211（HTTPS）
 - **Python 包**: `py_remote_input`（纯标准库，无第三方运行时依赖）
 - **入口**: 源码 `python3 -m py_remote_input`（或 `uv run ...`）；安装后为命令 `remote-input-board`（pyproject `[project.scripts]`）
-- **系统依赖**: `ydotool`（Arch: pacman；Debian: apt；Fedora: dnf），通过 uinput 模拟输入，Wayland 和 X11 均可；需要能访问 `/dev/uinput`（用户在 `input` 组或运行 `ydotoold` 守护进程）
+- **系统依赖**: `wtype`（Arch: pacman；Debian: apt），且运行在 Wayland 会话中，需要能访问 `WAYLAND_DISPLAY` / `XDG_RUNTIME_DIR`
 - **访问控制**: KDE Connect 式配对。手机首次过 PIN 锁屏（纯点按数字键盘）后获得持久 token，服务端把设备哈希记入配置目录 `trusted_devices.json`，之后 IP 变化/重启都免 PIN，直到 `/api/logout` 或删除该文件。PIN 来自 `PIN_CODE` 环境变量，否则读配置目录 `pin.txt`，再没有就自动生成 6 位数字（0600）并打印到启动日志
 - **文件布局（XDG）**: 配置（pin.txt / trusted_devices.json / cert.pem / key.pem）在 `$XDG_CONFIG_HOME/remote-input-board`（默认 `~/.config/...`，目录 0700）；数据（logs/ 含 server.log、history、stats.json）在 `$XDG_DATA_HOME/remote-input-board`（默认 `~/.local/share/...`）。`REMOTE_INPUT_CONFIG_DIR` / `REMOTE_INPUT_DATA_DIR` 可覆盖。路径逻辑集中在 `py_remote_input/paths.py`，`serve()` 启动时先 `ensure_app_dirs()` 再 `migrate_legacy_files()`（旧 CWD 文件仅迁移一次）
 - **Arch 打包**: `packaging/arch/PKGBUILD`（VCS 包 `remote-input-board-git`，source 指向 GitHub，PEP517 wheel + installer）；`packaging/systemd/remote-input-board.service` 装到 `/usr/lib/systemd/user/`；scripts/ 两个脚本装为 `/usr/bin/remote-input-board-generate-cert`、`/usr/bin/remote-input-board-rebuild-stats`
@@ -51,7 +51,7 @@ curl -s "http://127.0.0.1:3210/api/ping?token=$TOKEN"
 | `py_remote_input/paths.py` | XDG 路径：`config_dir()`/`data_dir()`/`ensure_app_dirs()`/`migrate_legacy_files()`；覆盖变量 `REMOTE_INPUT_CONFIG_DIR`/`REMOTE_INPUT_DATA_DIR` |
 | `py_remote_input/web.py` | HTTP 路由 + 请求处理（auth / type / key / ping / stats）；token 接受 `Authorization: Bearer` 头或 `?token=` 查询参数；`ALLOWED_REMOTE_KEYS={"Return"}` 为远程按键白名单；`MAX_GET_TEXT_CHARS=600` 限制 URL 直发长度 |
 | `py_remote_input/auth.py` | PIN 加载与限流；trusted-device 配对：32 字节随机 token、服务端只存 SHA-256、落盘 `trusted_devices.json`（0600）、**不绑 IP、重启不失效**、`revoke()` 取消配对 |
-| `py_remote_input/typer.py` | Linux 文字输入：调用 `ydotool`（uinput，Wayland/X11 通用），**换行折叠为单个空格**（打出的换行=真实回车，会提前提交/执行半条消息，文本通道绝不自动按回车）；长文本按 `CHUNK_CHAR_LIMIT=4000` 分批；`press_key(keysym)` 按 `ALLOWED_KEYSYMS` 白名单校验后执行 `ydotool key 28`（28 为 Linux 内核键码 Enter），`press_return()` 为其便捷封装 |
+| `py_remote_input/typer.py` | Linux 文字输入：调用 `wtype`，**换行折叠为单个空格**（打出的换行=真实回车，会提前提交/执行半条消息，文本通道绝不自动按回车）；长文本按 `CHUNK_CHAR_LIMIT=4000` 分批；`press_key(keysym)` 按 `ALLOWED_KEYSYMS` 白名单校验后执行 `wtype -k <keysym>`，`press_return()` 为其便捷封装 |
 | `py_remote_input/stats.py` | 字数统计存储 |
 | `py_remote_input/logger.py` | 日志（同时输出 stdout 和文件） |
 | `scripts/rebuild_stats.py` | 从 history 重建 stats.json（默认读写 data 目录；安装后为 `/usr/bin/remote-input-board-rebuild-stats`） |
@@ -92,7 +92,7 @@ curl -s "http://127.0.0.1:3210/api/ping?token=$TOKEN"
 
 ## 注意事项
 
-- Wayland 和 X11 均可（ydotool 通过 uinput 模拟输入）
-- ydotool 向**当前焦点窗口**输入，发送前需在电脑上点好目标输入位置
+- 只支持 Wayland（wtype）。X11 场景需要改用 xdotool/ydotool，目前未实现
+- wtype 向**当前焦点窗口**输入，发送前需在电脑上点好目标输入位置
 - 需确保防火墙允许局域网访问 TCP 3210（HTTP）；启用 HTTPS 后还要放行 3211（或自定义的 `HTTPS_PORT`）
 - 页面被前端强缓存时可能需要强制刷新
